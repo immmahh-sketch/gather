@@ -62,6 +62,23 @@
     return !!stream && stream.getVideoTracks().some(t => t.readyState === 'live' && !t.muted);
   }
 
+  // ---------- ICE servers ----------
+  // STUN comes from config. TURN credentials are fetched from the gather-turn
+  // function; if that is missing or slow the call goes ahead with STUN only.
+  let iceServers = (cfg.ICE_SERVERS || []).slice();
+  const icePromise = (async () => {
+    if (!cfg.TURN_ENDPOINT) return;
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch(cfg.TURN_ENDPOINT, { headers: { apikey: cfg.SUPABASE_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_KEY }, signal: ctl.signal });
+      clearTimeout(timer);
+      if (!r.ok) return;
+      const data = await r.json();
+      if (Array.isArray(data.iceServers) && data.iceServers.length) iceServers = iceServers.concat(data.iceServers);
+    } catch {}
+  })();
+
   // ---------- local media ----------
   const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   const videoConstraints = () => ({ width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: local.facing });
@@ -142,12 +159,15 @@
     } catch {}
   }
 
-  function join() {
+  async function join() {
     if (joined) return;
     local.name = el.nameInput.value.trim().slice(0, 30) || 'Guest';
     try { localStorage.setItem('gather.name', local.name); } catch {}
     joined = true;
     ensureAudioContext();
+    el.joinBtn.disabled = true;
+    el.joinBtn.textContent = 'Joining…';
+    await icePromise; // never longer than the 4s timeout
     el.prejoin.classList.add('hidden');
     el.call.classList.remove('hidden');
     addLocalTile();
@@ -252,7 +272,7 @@
   }
 
   function createPC(p, initiator) {
-    const pc = new RTCPeerConnection({ iceServers: cfg.ICE_SERVERS || [] });
+    const pc = new RTCPeerConnection({ iceServers });
     p.pc = pc;
     pc.onnegotiationneeded = async () => {
       try {
