@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f6f3ee">
+<title>Gather – video calls for friends and family</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b6cf6'/%3E%3Crect x='12' y='20' width='28' height='24' rx='5' fill='white'/%3E%3Cpath d='M42 28l12-7v22l-12-7z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<main class="home">
+  <h1>Gather</h1>
+  <p class="tag">Video calls with the people you like. No accounts, nothing to install. Works on phones and computers.</p>
+
+  <section class="card">
+    <h2>Start a call now</h2>
+    <p>Makes a fresh room with a new link. Send the link to whoever you want on the call.</p>
+    <button class="btn primary big" id="newCall" type="button">Start a new call</button>
+  </section>
+
+  <section class="card">
+    <h2>Your permanent room</h2>
+    <p>This link never changes. Send it once and everyone can use it every time. Pick a name that is hard to guess.</p>
+    <div class="row">
+      <input class="field" id="permName" type="text" placeholder="e.g. smith-family-sundays" maxlength="40" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </div>
+    <div class="link-box" id="permLink"></div>
+    <div class="row">
+      <button class="btn primary" id="openPerm" type="button">Open my room</button>
+      <button class="btn" id="copyPerm" type="button">Copy link</button>
+      <button class="btn" id="sharePerm" type="button">Share…</button>
+    </div>
+    <div class="hint">Saved on this device. Anyone with the link can join, so treat it like a phone number.</div>
+  </section>
+
+  <section class="card">
+    <h2>Join a call</h2>
+    <p>Paste the link or room name someone sent you.</p>
+    <form class="row" id="joinForm">
+      <input class="field" id="joinInput" type="text" placeholder="Link or room name" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <button class="btn primary" type="submit">Join</button>
+    </form>
+  </section>
+
+  <footer>
+    <strong>How it works</strong>
+    <ul>
+      <li>Calls go directly between your devices, encrypted, with nothing recorded or stored.</li>
+      <li>Best for up to about six people at once.</li>
+      <li>Screen sharing works from a laptop or desktop, and from most Android phones. iPhones can watch a shared screen but not share their own.</li>
+      <li>Use Safari on iPhone and Chrome or Edge elsewhere. Allow the camera and microphone when asked.</li>
+    </ul>
+  </footer>
+</main>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const slug = s => String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  const base = location.origin + location.pathname.replace(/index\.html$/, '');
+  const linkFor = room => base + 'call.html?room=' + encodeURIComponent(room);
+
+  const A = ['sunny', 'cosy', 'happy', 'bright', 'merry', 'jolly', 'calm', 'lucky', 'gentle', 'breezy', 'golden', 'rosy', 'quiet', 'warm', 'clever', 'snug', 'brave', 'kind'];
+  const B = ['otter', 'robin', 'maple', 'harbour', 'meadow', 'pebble', 'teapot', 'lantern', 'willow', 'clover', 'biscuit', 'kettle', 'heron', 'orchard', 'puffin', 'bramble', 'badger', 'wren'];
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+  const randomRoom = () => pick(A) + '-' + pick(B) + '-' + Math.floor(100 + Math.random() * 900);
+
+  // Start a new call
+  $('#newCall').addEventListener('click', () => { location.href = linkFor(randomRoom()); });
+
+  // Permanent room
+  const permName = $('#permName'), permLink = $('#permLink');
+  let perm = slug(localStorage.getItem('gather.room')) || (pick(A) + '-' + pick(B) + '-' + pick(B));
+  const savePerm = () => {
+    perm = slug(permName.value) || perm;
+    try { localStorage.setItem('gather.room', perm); } catch {}
+    permLink.textContent = linkFor(perm);
+  };
+  permName.value = perm; savePerm();
+  permName.addEventListener('input', savePerm);
+  permName.addEventListener('blur', () => { permName.value = perm; savePerm(); });
+  $('#openPerm').addEventListener('click', () => { savePerm(); location.href = linkFor(perm); });
+  $('#copyPerm').addEventListener('click', async () => {
+    savePerm();
+    try { await navigator.clipboard.writeText(linkFor(perm)); $('#copyPerm').textContent = 'Copied'; setTimeout(() => $('#copyPerm').textContent = 'Copy link', 1500); }
+    catch { prompt('Copy this link', linkFor(perm)); }
+  });
+  const shareBtn = $('#sharePerm');
+  if (!navigator.share) shareBtn.classList.add('hidden');
+  shareBtn.addEventListener('click', () => { savePerm(); navigator.share({ title: 'Join my video call', text: 'Join my video call', url: linkFor(perm) }).catch(() => {}); });
+
+  // Join
+  $('#joinForm').addEventListener('submit', e => {
+    e.preventDefault();
+    let v = $('#joinInput').value.trim();
+    try { const u = new URL(v); v = u.searchParams.get('room') || v; } catch {}
+    const room = slug(v);
+    if (room) location.href = linkFor(room);
+  });
+})();
+</script>
+</body>
+</html>
