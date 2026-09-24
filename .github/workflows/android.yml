@@ -20,8 +20,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
+      # The ubuntu runner already has the Android SDK; Gradle fetches platform 34 into it.
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
