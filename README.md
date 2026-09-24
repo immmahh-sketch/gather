@@ -8,16 +8,20 @@ Live at https://gathercall.uk (GitHub Pages, custom domain via the `CNAME` file;
 
 - `index.html` – home: start a new call, your permanent room link, or join with a link.
 - `call.html?room=<name>` – the call itself. Any room name works; a permanent link is just a room name you keep using.
-- Media runs through **Cloudflare Realtime's SFU**: each person uploads one copy of their camera, mic and screen, and pulls everyone else's from Cloudflare. Cameras are sent as three simulcast layers and each viewer pulls the size that fits the tile, so a big call stays light on phones. Cloudflare's SFU is free for the first 1,000 GB a month, then about 5p per GB.
-- **Supabase Realtime** is only the meeting point: presence on channel `call-<room>` says who is in the room, which Cloudflare session they hold and which tracks they publish. No tables, nothing stored.
+- Media runs through **Cloudflare Realtime's SFU**. Each device keeps two connections to Cloudflare: *push* sends its own camera, mic and share, and *pull* receives everyone else. Cameras go up as three simulcast layers and each viewer pulls the size that fits the tile, so a big call stays light on phones. Cloudflare's SFU is free for the first 1,000 GB a month, then about 5p per GB.
+- Received tracks that go away are force-closed on Cloudflare and their slots left idle, never renegotiated away. A renegotiated slot gets reused by Cloudflare with its RTP header extensions renumbered, which Chrome rejects ("RTP extension ID reassignment not supported"). If the receiving side ever does fail, it rebuilds itself and pulls everything again; nobody else notices.
+- **Supabase Realtime** is only the meeting point: presence on channel `call-<room>` says who is in the room, which Cloudflare session they send on, which tracks they publish, and whether they are a TV. No tables, nothing stored.
 - The **`gather-rtc` edge function** (`supabase/functions/gather-rtc`) holds the Cloudflare secrets. It forwards the SFU session API and mints short-lived TURN credentials for people on awkward networks.
 
 ## Features
 
 - Camera, microphone, mute and camera-off, front/back camera switch on phones.
-- Screen sharing from desktop browsers and Android Chrome. Shared screens go full-size for everyone else; pin any tile to make it big.
+- **Share your screen** from a laptop or desktop browser. Shared screens go full-size for everyone else; pin any tile to make it big.
+- **Share photos or videos** from any device, phones included: pick them from the camera roll and step through them with the arrows; videos play with sound for everyone else. No phone browser (Safari, Chrome or Firefox) allows a web page to capture the phone's own screen, so this is the phone equivalent.
+- **Full screen on TVs**: while sharing, the sharer's bar has a switch (on by default) that makes Fire Sticks show the share edge to edge with nothing else on screen. Off, TVs show the share with everyone's faces beside it.
+- TVs are viewers only: they get no tile and are not counted as people.
 - Who-is-speaking highlight, join/leave notices, call timer, invite button (native share sheet on phones, copies the link elsewhere).
-- Keyboard: `M` mute, `V` camera.
+- Keyboard: `M` mute, `V` camera, `←`/`→` previous/next photo when presenting.
 
 ## One-time setup: Cloudflare
 

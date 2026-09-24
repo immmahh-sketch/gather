@@ -30,7 +30,10 @@
   const isTouch = matchMedia('(pointer: coarse)').matches;
   // TV mode (Fire Stick app): no camera or microphone, joins by itself, watches full screen.
   const tvMode = new URLSearchParams(location.search).get('tv') === '1';
-  const canShare = !tvMode && !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  // Live screen capture only exists in desktop browsers. Every device can share
+  // photos and videos instead, so the share button shows everywhere except TVs.
+  const canScreen = !tvMode && !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  const canShare = !tvMode;
   if (tvMode) document.body.classList.add('tv');
 
   const ICON = {
@@ -39,7 +42,8 @@
   };
 
   // ---------- state ----------
-  const local = { name: '', cam: new MediaStream(), audio: null, video: null, screen: null, screenName: null, facing: 'user', micOn: true, camOn: true, permissionError: null };
+  const local = { name: '', cam: new MediaStream(), audio: null, video: null, screen: null, screenName: null, shareKind: null, tvFull: true, facing: 'user', micOn: true, camOn: true, permissionError: null };
+  try { local.tvFull = localStorage.getItem('gather.tvfull') !== '0'; } catch {}
   const peers = new Map();  // peerId -> peer
   const tiles = new Map();  // tileId -> tile
   const meters = new Map(); // tileId -> audio level meter
@@ -148,7 +152,7 @@
     for (const b of [el.camBtn, el.preCam]) { b.classList.toggle('off', !local.camOn || !local.video); b.disabled = !local.video; b.title = local.video ? (local.camOn ? 'Camera off (V)' : 'Camera on (V)') : 'No camera'; }
     el.previewWrap.classList.toggle('no-video', !(local.video && local.camOn));
     el.shareBtn.classList.toggle('on', !!local.screen);
-    el.shareBtn.title = local.screen ? 'Stop sharing' : 'Share your screen';
+    el.shareBtn.title = local.screen ? 'Stop sharing' : canScreen ? 'Share' : 'Share photos or videos';
     updateLocalTile();
   }
 
@@ -200,37 +204,61 @@
   el.preCam.addEventListener('click', () => setCam(!local.camOn));
   el.joinBtn.addEventListener('click', join);
 
-  // ---------- SFU session ----------
+  // ---------- SFU sessions ----------
+  // Two connections to Cloudflare. "push" sends this device's camera, mic and
+  // share; "pull" receives everyone else. Keeping them apart means the receiving
+  // side can be rebuilt on its own without anyone else noticing.
+  //
+  // Received slots are never renegotiated away. When a track goes away it is
+  // force-closed on Cloudflare only, and the local slot sits idle. A slot closed
+  // by renegotiation gets reused by Cloudflare for the next track with its RTP
+  // header extensions renumbered, which Chrome rejects ("RTP extension ID
+  // reassignment not supported"); a force-closed slot is never reused.
   const sfu = {
-    pc: null, sessionId: null, queue: Promise.resolve(),
+    push: { pc: null, sessionId: null },
+    pull: { pc: null, sessionId: null },
+    queue: Promise.resolve(),
     pulls: new Map(),      // key sessionId/trackName -> pull
-    byMid: new Map(),      // mid -> pull
-    localMids: new Map(),  // trackName -> mid
+    byMid: new Map(),      // pull-connection mid -> pull
+    idle: 0,               // slots whose track has gone
+    localMids: new Map(),  // local trackName -> push mid
     published: [],         // local track names others may pull
-    screenSeq: 0, attempts: 0, reconnecting: false, reconnectTimer: null, retryTimer: null
+    screenSeq: 0, attempts: 0, reconnecting: false, reconnectTimer: null,
+    retryTimer: null, retryCount: 0, pullTimer: null, pullFailures: 0
   };
-  // Every change to the Cloudflare session goes through one queue, so the
-  // connection is never asked to negotiate two things at once.
+  // Every change to the Cloudflare sessions goes through one queue, so neither
+  // connection is ever asked to negotiate two things at once.
   function enqueue(fn) {
     const run = sfu.queue.then(fn, fn);
     sfu.queue = run.catch(() => {});
     return run;
   }
 
-  async function connectSFU() {
+  function newPC(onState) {
     const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
-    sfu.pc = pc; sfu.sessionId = null;
-    sfu.pulls.clear(); sfu.byMid.clear(); sfu.localMids.clear(); sfu.published = [];
-    pc.ontrack = onTrack;
-    pc.onconnectionstatechange = () => onConnState(pc);
-    const outgoing = [];
-    if (local.audio) outgoing.push({ tr: pc.addTransceiver(local.audio, { direction: 'sendonly' }), name: 'mic' });
-    if (local.video) outgoing.push({ tr: pc.addTransceiver(local.video, { direction: 'sendonly', sendEncodings: camEncodings() }), name: 'cam' });
-    if (local.screen) for (const t of local.screen.getTracks()) outgoing.push({ tr: pc.addTransceiver(t, { direction: 'sendonly' }), name: t.kind === 'video' ? local.screenName : local.screenName + '-audio' });
-    // With nothing to send we still need one media line to bring the connection up.
-    if (!outgoing.length) outgoing.push({ tr: pc.addTransceiver('audio', { direction: 'sendonly' }), name: 'idle' });
-    const { sessionId } = await api('/sessions/new', 'POST');
-    sfu.sessionId = sessionId;
+    pc.onconnectionstatechange = () => onState(pc);
+    return pc;
+  }
+
+  function localOutgoing(pc) {
+    const out = [];
+    if (local.audio) out.push({ tr: pc.addTransceiver(local.audio, { direction: 'sendonly' }), name: 'mic' });
+    if (local.video) out.push({ tr: pc.addTransceiver(local.video, { direction: 'sendonly', sendEncodings: camEncodings() }), name: 'cam' });
+    if (local.screen) for (const t of local.screen.getTracks()) {
+      out.push({ tr: pc.addTransceiver(t, Object.assign({ direction: 'sendonly' }, t.kind === 'video' ? { sendEncodings: [{ maxBitrate: 2500000 }] } : {})), name: t.kind === 'video' ? local.screenName : local.screenName + '-audio' });
+    }
+    return out;
+  }
+
+  // Opens the push session with whatever this device has to send. A device with
+  // nothing to send (a TV, or no camera or mic) needs no push session at all.
+  async function connectSFU() {
+    sfu.localMids.clear(); sfu.published = [];
+    const pc = newPC(onPushState);
+    const outgoing = localOutgoing(pc);
+    if (!outgoing.length) { pc.close(); sfu.push = { pc: null, sessionId: null }; sfu.attempts = 0; return; }
+    sfu.push = { pc, sessionId: null };
+    sfu.push.sessionId = (await api('/sessions/new', 'POST')).sessionId;
     await pushOffer(pc, outgoing);
     await waitConnected(pc, 12000);
     sfu.attempts = 0;
@@ -241,7 +269,7 @@
   async function pushOffer(pc, outgoing) {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    const res = await api('/sessions/' + sfu.sessionId + '/tracks/new', 'POST', {
+    const res = await api('/sessions/' + sfu.push.sessionId + '/tracks/new', 'POST', {
       sessionDescription: { type: 'offer', sdp: offer.sdp },
       tracks: outgoing.map(o => ({ location: 'local', mid: o.tr.mid, trackName: o.name }))
     });
@@ -250,7 +278,7 @@
     for (const o of outgoing) {
       if (failed.has(o.name)) { console.warn('publish failed', o.name); continue; }
       sfu.localMids.set(o.name, o.tr.mid);
-      if (o.name !== 'idle') sfu.published.push(o.name);
+      sfu.published.push(o.name);
     }
   }
 
@@ -266,28 +294,47 @@
     });
   }
 
-  function teardownSFU() {
-    if (sfu.pc) {
-      sfu.pc.ontrack = null; sfu.pc.onconnectionstatechange = null;
-      try { sfu.pc.close(); } catch {}
-    }
-    sfu.pc = null; sfu.sessionId = null;
-    sfu.pulls.clear(); sfu.byMid.clear(); sfu.localMids.clear(); sfu.published = [];
-    clearTimeout(sfu.reconnectTimer); sfu.reconnectTimer = null;
+  function resetPull() {
+    const pc = sfu.pull.pc;
+    if (pc) { pc.ontrack = null; pc.onconnectionstatechange = null; try { pc.close(); } catch {} }
+    sfu.pull = { pc: null, sessionId: null };
+    sfu.pulls.clear(); sfu.byMid.clear(); sfu.idle = 0;
+    clearTimeout(sfu.pullTimer); sfu.pullTimer = null;
     for (const p of peers.values()) resetPeerStreams(p);
   }
 
-  function onConnState(pc) {
-    if (pc !== sfu.pc) return;
+  function teardownSFU() {
+    const pc = sfu.push.pc;
+    if (pc) { pc.onconnectionstatechange = null; try { pc.close(); } catch {} }
+    sfu.push = { pc: null, sessionId: null };
+    sfu.localMids.clear(); sfu.published = [];
+    clearTimeout(sfu.reconnectTimer); sfu.reconnectTimer = null;
+    clearTimeout(sfu.retryTimer); sfu.retryTimer = null;
+    resetPull();
+  }
+
+  function onPushState(pc) {
+    if (pc !== sfu.push.pc) return;
     const s = pc.connectionState;
     if (s === 'connected') { setNet(''); clearTimeout(sfu.reconnectTimer); sfu.reconnectTimer = null; }
     else if (s === 'failed') reconnectSFU();
     else if (s === 'disconnected') {
       setNet('Reconnecting…');
-      if (!sfu.reconnectTimer) sfu.reconnectTimer = setTimeout(() => { if (sfu.pc === pc && pc.connectionState !== 'connected') reconnectSFU(); }, 8000);
+      if (!sfu.reconnectTimer) sfu.reconnectTimer = setTimeout(() => { sfu.reconnectTimer = null; if (sfu.push.pc === pc && pc.connectionState !== 'connected') reconnectSFU(); }, 8000);
     }
   }
 
+  function onPullState(pc) {
+    if (pc !== sfu.pull.pc) return;
+    const s = pc.connectionState;
+    if (s === 'connected') { clearTimeout(sfu.pullTimer); sfu.pullTimer = null; }
+    else if (s === 'failed') onPullError(new Error('incoming video connection failed'));
+    else if (s === 'disconnected' && !sfu.pullTimer) {
+      sfu.pullTimer = setTimeout(() => { sfu.pullTimer = null; if (sfu.pull.pc === pc && pc.connectionState !== 'connected') onPullError(new Error('incoming video connection lost')); }, 8000);
+    }
+  }
+
+  // Full reconnect: both sessions, used when the sending side drops.
   function reconnectSFU() {
     if (!joined || sfu.reconnecting) return;
     sfu.reconnecting = true;
@@ -310,15 +357,31 @@
     });
   }
 
-  // Stop transceivers and tell Cloudflare, with a negotiated close first and a
-  // forced close if that is refused.
+  // Receiving side went wrong (a failed negotiation, a dropped connection, a
+  // server error): throw the pull session away and pull everything again.
+  // Nobody else is affected, and this device's own video keeps flowing.
+  function onPullError(e, tidy) {
+    if (!joined || sfu.reconnecting) return;
+    console.warn('rebuilding incoming video:', e && e.message);
+    if (!tidy) sfu.pullFailures++;
+    if (sfu.pullFailures > 1) setNet('Reconnecting…');
+    const delay = Math.min(15000, 500 * Math.pow(2, sfu.pullFailures - 1));
+    enqueue(async () => resetPull()).then(() => {
+      render();
+      clearTimeout(sfu.retryTimer);
+      sfu.retryTimer = setTimeout(syncPulls, delay);
+    });
+  }
+
+  // Stop push transceivers and tell Cloudflare, with a negotiated close first
+  // and a forced close if that is refused.
   async function closeMids(pc, mids) {
-    if (!mids.length || !sfu.sessionId) return;
+    if (!mids.length || !sfu.push.sessionId) return;
     for (const mid of mids) {
       const tr = pc.getTransceivers().find(t => t.mid === mid);
       if (tr) { try { tr.stop(); } catch {} }
     }
-    const path = '/sessions/' + sfu.sessionId + '/tracks/close';
+    const path = '/sessions/' + sfu.push.sessionId + '/tracks/close';
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -333,17 +396,26 @@
 
   function publishLocal(entries) {
     return enqueue(async () => {
-      const pc = sfu.pc;
-      if (!pc || !sfu.sessionId) throw new Error('not connected');
-      const outgoing = entries.map(e => ({ tr: pc.addTransceiver(e.track, Object.assign({ direction: 'sendonly' }, e.init || {})), name: e.name }));
-      await pushOffer(pc, outgoing);
+      if (!sfu.push.pc) {
+        // First thing this device sends (e.g. a laptop with no camera sharing its screen).
+        const pc = newPC(onPushState);
+        sfu.push = { pc, sessionId: null };
+        const outgoing = entries.map(e => ({ tr: pc.addTransceiver(e.track, Object.assign({ direction: 'sendonly' }, e.init || {})), name: e.name }));
+        sfu.push.sessionId = (await api('/sessions/new', 'POST')).sessionId;
+        await pushOffer(pc, outgoing);
+        await waitConnected(pc, 12000);
+      } else {
+        const pc = sfu.push.pc;
+        const outgoing = entries.map(e => ({ tr: pc.addTransceiver(e.track, Object.assign({ direction: 'sendonly' }, e.init || {})), name: e.name }));
+        await pushOffer(pc, outgoing);
+      }
       updatePresence();
     });
   }
 
   function unpublishLocal(names) {
     return enqueue(async () => {
-      const pc = sfu.pc;
+      const pc = sfu.push.pc;
       const mids = names.map(n => sfu.localMids.get(n)).filter(Boolean);
       for (const n of names) sfu.localMids.delete(n);
       sfu.published = sfu.published.filter(n => !names.includes(n));
@@ -370,70 +442,122 @@
     return wanted;
   }
 
-  function syncPulls() {
-    if (!sfu.pc || !sfu.sessionId || sfu.reconnecting) return;
-    enqueue(async () => {
-      const pc = sfu.pc;
-      if (!pc || !sfu.sessionId) return;
-      const wanted = wantedPulls();
-      const stale = [...sfu.pulls.values()].filter(pl => !wanted.has(pl.key));
-      const missing = [...wanted.values()].filter(w => !sfu.pulls.has(w.key));
-      if (stale.length) await closePulls(pc, stale);
-      if (missing.length) await pullTracks(pc, missing);
-    }).catch(e => { console.warn('sync', e); scheduleRetry(); });
-  }
-  function scheduleRetry() {
-    clearTimeout(sfu.retryTimer);
-    sfu.retryTimer = setTimeout(syncPulls, 2500);
+  function simulcastFor(w) {
+    return w.media === 'video' && w.kind === 'cam'
+      ? { simulcast: { preferredRid: desiredRid(w.peerId), priorityOrdering: 'asciibetical', ridNotAvailable: 'asciibetical' } }
+      : {};
   }
 
-  async function pullTracks(pc, list) {
-    const res = await api('/sessions/' + sfu.sessionId + '/tracks/new', 'POST', {
-      tracks: list.map(w => Object.assign(
-        { location: 'remote', sessionId: w.sessionId, trackName: w.trackName },
-        w.media === 'video' && w.kind === 'cam'
-          ? { simulcast: { preferredRid: desiredRid(w.peerId), priorityOrdering: 'asciibetical', ridNotAvailable: 'asciibetical' } }
-          : {}
-      ))
+  async function ensurePull() {
+    if (sfu.pull.pc) return sfu.pull;
+    const pc = newPC(onPullState);
+    pc.ontrack = onTrack;
+    const { sessionId } = await api('/sessions/new', 'POST');
+    sfu.pull = { pc, sessionId };
+    return sfu.pull;
+  }
+
+  function syncPulls() {
+    if (!joined || sfu.reconnecting) return;
+    enqueue(async () => {
+      if (!joined || sfu.reconnecting) return;
+      const wanted = wantedPulls();
+      const gone = [...sfu.pulls.values()].filter(pl => !wanted.has(pl.key));
+      if (gone.length) await releasePulls(gone);
+      const missing = [...wanted.values()].filter(w => !sfu.pulls.has(w.key));
+      if (!missing.length) return;
+      const pull = await ensurePull();
+      const failed = await pullTracks(pull, missing);
+      sfu.pullFailures = 0;
+      if (!sfu.reconnecting && (!sfu.push.pc || sfu.push.pc.connectionState === 'connected')) setNet('');
+      if (failed) scheduleRetry(); else sfu.retryCount = 0;
+    }).then(() => {
+      // A long call with lots of comings and goings leaves many idle slots.
+      // Past a point, start the receiving side afresh so it stays light.
+      if (sfu.idle > 30 && joined) onPullError(new Error('tidying up idle slots'), true);
+    }).catch(e => onPullError(e));
+  }
+  // A track can be listed before it carries any data (someone still starting
+  // up). Retry, backing off so a track that never arrives costs little.
+  function scheduleRetry() {
+    clearTimeout(sfu.retryTimer);
+    const delay = Math.min(30000, 2500 * Math.pow(2, sfu.retryCount++));
+    sfu.retryTimer = setTimeout(syncPulls, delay);
+  }
+
+  function registerPull(w, mid, track) {
+    const pl = Object.assign({}, w, { mid, rid: w.media === 'video' && w.kind === 'cam' ? desiredRid(w.peerId) : null, track: track || null });
+    sfu.pulls.set(w.key, pl);
+    sfu.byMid.set(mid, pl);
+    if (pl.track) attachPull(pl);
+    return pl;
+  }
+
+  // Tracks have gone: detach them from their people, tell Cloudflare to stop
+  // sending them, and leave the local slots idle (see the note at the top).
+  async function releasePulls(list) {
+    for (const pl of list) {
+      sfu.pulls.delete(pl.key);
+      sfu.byMid.delete(pl.mid);
+      sfu.idle++;
+      const p = peers.get(pl.peerId);
+      if (p && pl.track) { p.camStream.removeTrack(pl.track); p.screenStream.removeTrack(pl.track); refreshPeerTiles(p); }
+    }
+    if (!sfu.pull.sessionId) return;
+    await api('/sessions/' + sfu.pull.sessionId + '/tracks/close', 'PUT', { tracks: list.map(pl => ({ mid: pl.mid })), force: true })
+      .catch(e => console.warn('close idle slots', e && e.message)); // harmless if it fails
+  }
+
+  async function pullTracks(pull, list) {
+    const res = await api('/sessions/' + pull.sessionId + '/tracks/new', 'POST', {
+      tracks: list.map(w => Object.assign({ location: 'remote', sessionId: w.sessionId, trackName: w.trackName }, simulcastFor(w)))
     });
     let failed = false;
     (res.tracks || []).forEach((t, i) => {
       const w = list.find(x => x.trackName === t.trackName && (!t.sessionId || x.sessionId === t.sessionId)) || list[i];
       if (!w) return;
       if (t.errorCode || !t.mid) { console.warn('pull failed', w.trackName, t.errorDescription || t.errorCode); failed = true; return; }
-      const pull = Object.assign({}, w, { mid: t.mid, rid: w.media === 'video' && w.kind === 'cam' ? desiredRid(w.peerId) : null, track: null });
-      sfu.pulls.set(w.key, pull);
-      sfu.byMid.set(t.mid, pull);
+      registerPull(w, t.mid, null);
     });
-    if (res.requiresImmediateRenegotiation && res.sessionDescription) {
-      await pc.setRemoteDescription(res.sessionDescription);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await api('/sessions/' + sfu.sessionId + '/renegotiate', 'PUT', { sessionDescription: { type: 'answer', sdp: answer.sdp } });
-    }
+    if (res.requiresImmediateRenegotiation && res.sessionDescription) await applyOffer(pull, res.sessionDescription);
     for (const p of peers.values()) updatePeerTiles(p);
-    if (failed) scheduleRetry();
+    return failed;
   }
 
-  async function closePulls(pc, list) {
-    for (const pl of list) {
-      sfu.pulls.delete(pl.key); sfu.byMid.delete(pl.mid);
-      const p = peers.get(pl.peerId);
-      if (p && pl.track) { p.camStream.removeTrack(pl.track); p.screenStream.removeTrack(pl.track); refreshPeerTiles(p); }
+  // Cloudflare offers, we answer. If the browser rejects the offer the caller's
+  // catch rebuilds the pull session, so this never leaves things half-done.
+  async function applyOffer(pull, offer) {
+    const pc = pull.pc;
+    await pc.setRemoteDescription(offer);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await api('/sessions/' + pull.sessionId + '/renegotiate', 'PUT', { sessionDescription: { type: 'answer', sdp: answer.sdp } });
+  }
+
+  function attachPull(pl) {
+    const p = peers.get(pl.peerId);
+    const track = pl.track;
+    if (!p || !track) return;
+    const target = pl.kind === 'screen' ? p.screenStream : p.camStream;
+    const other = pl.kind === 'screen' ? p.camStream : p.screenStream;
+    if (other.getTracks().includes(track)) other.removeTrack(track);
+    if (!target.getTracks().includes(track)) target.addTrack(track);
+    if (!track._gather) {
+      // A reused slot keeps the same track object, so these are wired once and
+      // look up whoever owns the track now.
+      track._gather = true;
+      const owner = () => { for (const q of sfu.pulls.values()) if (q.track === track) return peers.get(q.peerId); return null; };
+      track.addEventListener('mute', () => { const o = owner(); if (o) updatePeerTiles(o); });
+      track.addEventListener('unmute', () => { const o = owner(); if (o) updatePeerTiles(o); });
     }
-    await closeMids(pc, list.map(pl => pl.mid));
+    refreshPeerTiles(p);
   }
 
   function onTrack(e) {
-    const pull = sfu.byMid.get(e.transceiver.mid);
-    if (!pull) return;
-    const p = peers.get(pull.peerId);
-    if (!p) return;
-    pull.track = e.track;
-    (pull.kind === 'screen' ? p.screenStream : p.camStream).addTrack(e.track);
-    e.track.addEventListener('mute', () => updatePeerTiles(p));
-    e.track.addEventListener('unmute', () => updatePeerTiles(p));
-    refreshPeerTiles(p);
+    const pl = sfu.byMid.get(e.transceiver.mid);
+    if (!pl) return;
+    pl.track = e.track;
+    attachPull(pl);
   }
 
   // Which simulcast layer a peer's camera should arrive in, from where its tile sits.
@@ -449,7 +573,7 @@
   let ridTimer = null;
   function scheduleRidUpdate() { clearTimeout(ridTimer); ridTimer = setTimeout(updateRids, 500); }
   function updateRids() {
-    if (!sfu.pc || !sfu.sessionId) return;
+    if (!sfu.pull.pc || !sfu.pull.sessionId) return;
     const changes = [];
     for (const pl of sfu.pulls.values()) {
       if (pl.media !== 'video' || pl.kind !== 'cam') continue;
@@ -458,8 +582,8 @@
     }
     if (!changes.length) return;
     enqueue(async () => {
-      if (!sfu.sessionId) return;
-      await api('/sessions/' + sfu.sessionId + '/tracks/update', 'PUT', {
+      if (!sfu.pull.sessionId) return;
+      await api('/sessions/' + sfu.pull.sessionId + '/tracks/update', 'PUT', {
         tracks: changes.map(pl => ({ location: 'remote', sessionId: pl.sessionId, trackName: pl.trackName, mid: pl.mid, simulcast: { preferredRid: pl.rid, priorityOrdering: 'asciibetical', ridNotAvailable: 'asciibetical' } }))
       });
     }).catch(e => console.warn('layer update', e));
@@ -511,7 +635,9 @@
     channel = null;
     for (const id of [...peers.keys()]) removePeer(id, false);
     teardownSFU();
-    if (local.screen) { local.screen.getTracks().forEach(t => t.stop()); local.screen = null; local.screenName = null; }
+    if (local.screen) { local.screen.getTracks().forEach(t => t.stop()); local.screen = null; local.screenName = null; local.shareKind = null; }
+    stopPresenter();
+    updatePresentBar();
     for (const t of local.cam.getTracks()) t.stop();
     el.call.classList.add('hidden');
     el.left.classList.remove('hidden');
@@ -534,9 +660,13 @@
       name: local.name,
       mic: !!(local.audio && local.micOn),
       cam: !!(local.video && local.camOn),
-      sessionId: sfu.sessionId,
+      sessionId: sfu.push.sessionId,
       tracks: sfu.published.slice(),
-      screen: local.screenName || null
+      screen: local.screenName || null,
+      shareKind: local.shareKind,
+      tv: tvMode, // TVs watch only, so nobody gives them a tile
+      // Whether TVs should show this share edge to edge with nothing else on screen.
+      tvFull: !!(local.screen && local.tvFull)
     };
   }
   function updatePresence() { if (channel && joined && everSubscribed) channel.track(presencePayload()).catch(() => {}); }
@@ -575,10 +705,13 @@
         cam: meta.cam !== false,
         sessionId: typeof meta.sessionId === 'string' ? meta.sessionId : null,
         tracks: Array.isArray(meta.tracks) ? meta.tracks.filter(t => typeof t === 'string').slice(0, 8) : [],
-        screen: typeof meta.screen === 'string' ? meta.screen : null
+        screen: typeof meta.screen === 'string' ? meta.screen : null,
+        shareKind: meta.shareKind === 'media' ? 'media' : 'screen',
+        tvFull: meta.tvFull === true
       };
+      if (meta.tv === true && !p.tv) { p.tv = true; removeTile(id + ':cam'); }
       if (prevSession && prevSession !== p.state.sessionId) resetPeerStreams(p);
-      if (!wasSeen) toast(p.state.name + ' joined');
+      if (!wasSeen) toast(p.tv ? 'A TV is watching' : p.state.name + ' joined');
       updatePeerTiles(p);
     }
     for (const [id, p] of peers) if (p.seen && !state[id]) removePeer(id, true);
@@ -590,7 +723,7 @@
   function createPeer(id) {
     const p = {
       id, seen: false,
-      state: { name: 'Guest', mic: true, cam: true, sessionId: null, tracks: [], screen: null },
+      state: { name: 'Guest', mic: true, cam: true, sessionId: null, tracks: [], screen: null, shareKind: 'screen', tvFull: false },
       camStream: new MediaStream(), screenStream: new MediaStream()
     };
     peers.set(id, p);
@@ -603,7 +736,7 @@
     refreshPeerTiles(p);
   }
   function refreshPeerTiles(p) {
-    setTileStream(p.id + ':cam', p.camStream, p, 'cam');
+    if (!p.tv) setTileStream(p.id + ':cam', p.camStream, p, 'cam');
     if (p.screenStream.getTracks().length) setTileStream(p.id + ':screen', p.screenStream, p, 'screen'); else removeTile(p.id + ':screen');
     updatePeerTiles(p);
     render();
@@ -614,7 +747,7 @@
     removeTile(id + ':cam');
     removeTile(id + ':screen');
     peers.delete(id);
-    if (announce && p.seen) toast(p.state.name + ' left');
+    if (announce && p.seen && !p.tv) toast(p.state.name + ' left');
     render();
   }
 
@@ -668,7 +801,7 @@
     const cam = tiles.get(p.id + ':cam');
     if (cam) setTileInfo(cam, { label: p.state.name, name: p.state.name, muted: !p.state.mic, noVideo: !(p.state.cam && videoLive(p.camStream)), connecting: waiting });
     const scr = tiles.get(p.id + ':screen');
-    if (scr) setTileInfo(scr, { label: p.state.name + "'s screen", name: p.state.name, muted: false, noVideo: !videoLive(p.screenStream), connecting: false });
+    if (scr) setTileInfo(scr, { label: p.state.shareKind === 'media' ? p.state.name + ' is presenting' : p.state.name + "'s screen", name: p.state.name, muted: false, noVideo: !videoLive(p.screenStream), connecting: false });
   }
   function addLocalTile() {
     setTileStream('local:cam', local.cam, null, 'cam');
@@ -679,7 +812,7 @@
     if (!t) return;
     setTileInfo(t, { label: 'You', name: local.name || el.nameInput.value || '?', muted: !(local.audio && local.micOn), noVideo: !(local.video && local.camOn && videoLive(local.cam)), connecting: false, mirror: local.facing === 'user' });
     const s = tiles.get('local:screen');
-    if (s) setTileInfo(s, { label: 'Your screen', name: local.name, muted: false, noVideo: !videoLive(s.stream), connecting: false });
+    if (s) setTileInfo(s, { label: local.shareKind === 'media' ? "You're presenting" : 'Your screen', name: local.name, muted: false, noVideo: !videoLive(s.stream), connecting: false });
   }
 
   function render() {
@@ -690,6 +823,12 @@
       if (shared.length) stageId = shared[shared.length - 1].id;
     }
     el.call.classList.toggle('has-stage', !!stageId);
+    if (tvMode) {
+      // The sharer decides whether TVs show their share edge to edge.
+      const st = stageId ? tiles.get(stageId) : null;
+      const owner = st && st.kind === 'screen' && !st.self ? peers.get(st.peerId) : null;
+      document.body.classList.toggle('tv-full', !!(owner && owner.state.tvFull));
+    }
     for (const t of all) {
       const target = t.id === stageId ? el.stage : (stageId ? el.strip : el.grid);
       if (t.el.parentNode !== target) { target.appendChild(t.el); if (t.stream) t.video.play().catch(() => {}); }
@@ -703,7 +842,7 @@
     // On a phone, more than six tiles scroll rather than shrink to nothing.
     el.grid.classList.toggle('scroll', portrait && n > 6);
     el.grid.style.setProperty('--cols', cols);
-    el.count.textContent = peers.size + 1;
+    el.count.textContent = [...peers.values()].filter(q => !q.tv).length + (tvMode ? 0 : 1);
     scheduleRidUpdate();
   }
   window.addEventListener('resize', render);
@@ -737,12 +876,14 @@
   el.leaveBtn.addEventListener('click', leave);
   el.rejoinBtn.addEventListener('click', () => location.reload());
   el.linkBtn.addEventListener('click', shareLink);
-  el.shareBtn.addEventListener('click', () => local.screen ? stopShare() : startShare());
+  el.shareBtn.addEventListener('click', onShareClick);
   el.flipBtn.addEventListener('click', flipCamera);
   document.addEventListener('keydown', e => {
     if (!joined || e.target.matches('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'm' || e.key === 'M') setMic(!local.micOn);
     if (e.key === 'v' || e.key === 'V') setCam(!local.camOn);
+    if (presenter && e.key === 'ArrowLeft') presenterShow(presenter.index - 1);
+    if (presenter && e.key === 'ArrowRight') presenterShow(presenter.index + 1);
   });
 
   async function shareLink() {
@@ -754,17 +895,62 @@
     catch { prompt('Copy this link', roomLink); }
   }
 
-  async function startShare() {
+  // ---------- sharing: the screen, or photos and videos from this device ----------
+  // Both go out the same way, as a "screen" track, so viewers and TVs treat them alike.
+  const shareMenu = $('#shareMenu'), mediaInput = $('#mediaInput'), pool = $('#presenterPool');
+  const pb = {
+    bar: $('#presentBar'), label: $('#pbLabel'), media: $('#pbMedia'), count: $('#pbCount'),
+    prev: $('#pbPrev'), next: $('#pbNext'), play: $('#pbPlay'), add: $('#pbAdd'), tv: $('#pbTv'), stop: $('#pbStop')
+  };
+  let presenter = null, mediaAppend = false, videoHintShown = false;
+
+  function onShareClick(e) {
+    e.stopPropagation();
+    if (local.screen) { stopShare(); return; }
+    if (!canScreen) { pickMedia(false); return; } // phones: straight to the photo picker
+    shareMenu.classList.toggle('hidden');
+  }
+  document.addEventListener('click', e => { if (!shareMenu.contains(e.target)) shareMenu.classList.add('hidden'); });
+  $('#shareScreenOpt').addEventListener('click', () => { shareMenu.classList.add('hidden'); startScreenShare(); });
+  $('#shareMediaOpt').addEventListener('click', () => { shareMenu.classList.add('hidden'); pickMedia(false); });
+
+  function pickMedia(append) {
+    ensureAudioContext(); // inside the tap, so iPhones allow the sound later
+    mediaAppend = append;
+    mediaInput.value = '';
+    mediaInput.click();
+  }
+  const VIDEO_EXT = /\.(mp4|mov|m4v|webm|3gp)$/i, IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|heif|avif|bmp)$/i;
+  mediaInput.addEventListener('change', () => {
+    const files = [...mediaInput.files].filter(f => /^(image|video)\//.test(f.type) || VIDEO_EXT.test(f.name) || IMAGE_EXT.test(f.name));
+    if (!files.length) return;
+    if (mediaAppend && presenter) presenterAdd(files); else startMediaShare(files);
+  });
+
+  async function startScreenShare() {
     if (local.screen) return;
     let s;
     try { s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: true }); }
     catch (e) { if (e.name !== 'NotAllowedError') toast('Could not share your screen'); return; }
-    local.screen = s;
-    local.screenName = 'screen-' + (++sfu.screenSeq) + '-' + myId.slice(0, 4);
     const vt = s.getVideoTracks()[0];
     if (vt) { vt.contentHint = 'detail'; vt.addEventListener('ended', stopShare); }
+    beginShare(s, 'screen');
+  }
+
+  function startMediaShare(files) {
+    if (local.screen) return;
+    presenter = presenterCreate();
+    beginShare(presenter.stream, 'media');
+    presenterAdd(files);
+  }
+
+  async function beginShare(s, kind) {
+    local.screen = s;
+    local.shareKind = kind;
+    local.screenName = 'screen-' + (++sfu.screenSeq) + '-' + myId.slice(0, 4);
     setTileStream('local:screen', s, null, 'screen');
     applyMediaButtons();
+    updatePresentBar();
     render();
     const entries = s.getTracks().map(t => ({
       track: t,
@@ -772,19 +958,187 @@
       init: t.kind === 'video' ? { sendEncodings: [{ maxBitrate: 2500000 }] } : {}
     }));
     try { await publishLocal(entries); }
-    catch (e) { console.warn('share', e); toast('Could not share your screen'); stopShare(); }
+    catch (e) { console.warn('share', e); toast('Could not start sharing'); stopShare(); }
   }
 
   function stopShare() {
     const s = local.screen;
     if (!s) return;
     const name = local.screenName;
-    local.screen = null; local.screenName = null;
+    local.screen = null; local.screenName = null; local.shareKind = null;
     s.getTracks().forEach(t => t.stop());
+    stopPresenter();
     removeTile('local:screen');
     applyMediaButtons();
+    updatePresentBar();
     render();
     unpublishLocal([name, name + '-audio']).catch(e => console.warn('unshare', e));
+  }
+
+  // ---------- presenter bar ----------
+  function updatePresentBar() {
+    const sharing = !!local.screen;
+    pb.bar.classList.toggle('hidden', !sharing);
+    if (!sharing) return;
+    const media = local.shareKind === 'media' && !!presenter;
+    pb.media.classList.toggle('hidden', !media);
+    pb.label.textContent = media ? "You're presenting" : "You're sharing your screen";
+    pb.tv.classList.toggle('on', local.tvFull);
+    pb.tv.setAttribute('aria-pressed', local.tvFull ? 'true' : 'false');
+    if (!media) return;
+    const it = presenter.items[presenter.index];
+    pb.count.textContent = presenter.items.length ? (presenter.index + 1) + ' / ' + presenter.items.length : '';
+    pb.prev.disabled = presenter.index <= 0;
+    pb.next.disabled = presenter.index >= presenter.items.length - 1;
+    const isVideo = !!it && it.kind === 'video';
+    pb.play.classList.toggle('hidden', !isVideo);
+    pb.play.classList.toggle('paused', isVideo && it.el.paused);
+  }
+  pb.prev.addEventListener('click', () => presenter && presenterShow(presenter.index - 1));
+  pb.next.addEventListener('click', () => presenter && presenterShow(presenter.index + 1));
+  pb.add.addEventListener('click', () => pickMedia(true));
+  pb.stop.addEventListener('click', stopShare);
+  pb.play.addEventListener('click', () => {
+    const it = presenter && presenter.items[presenter.index];
+    if (!it || it.kind !== 'video') return;
+    if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+    if (it.el.paused) { if (it.el.ended) it.el.currentTime = 0; it.el.play().catch(() => toast('Tap play again to start the video')); }
+    else it.el.pause();
+  });
+  pb.tv.addEventListener('click', () => {
+    local.tvFull = !local.tvFull;
+    try { localStorage.setItem('gather.tvfull', local.tvFull ? '1' : '0'); } catch {}
+    updatePresentBar();
+    updatePresence();
+    toast(local.tvFull ? 'TVs now show your share full screen' : 'TVs now show everyone beside your share');
+  });
+
+  // ---------- photo and video presenter ----------
+  // Draws the chosen photo or video onto a 720p canvas and sends the canvas as
+  // the shared screen. Video sound is routed to everyone else, not this device.
+  const PW = 1280, PH = 720, FPS = 24;
+
+  function presenterCreate() {
+    const canvas = document.createElement('canvas');
+    canvas.width = PW; canvas.height = PH;
+    pool.appendChild(canvas); // some phones only capture canvases that are in the page
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, PW, PH);
+    const stream = canvas.captureStream(FPS);
+    // Video sound goes out on its own track, but only once audio is actually
+    // running: a stalled track carries no data and viewers would keep retrying it.
+    let dest = null;
+    try {
+      ensureAudioContext();
+      if (actx && actx.state === 'running') { dest = actx.createMediaStreamDestination(); stream.addTrack(dest.stream.getAudioTracks()[0]); }
+    } catch (e) { console.warn('presenter audio', e); }
+    const p = { canvas, ctx, stream, dest, items: [], index: -1, tick: 0, last: null, timer: null };
+    p.timer = setInterval(() => presenterDraw(p), 1000 / FPS);
+    return p;
+  }
+
+  function presenterAdd(files) {
+    const p = presenter;
+    if (!p) return;
+    const first = p.items.length;
+    for (const f of files) {
+      const url = URL.createObjectURL(f);
+      const isVideo = (f.type || '').startsWith('video/') || (!f.type && VIDEO_EXT.test(f.name));
+      const item = { kind: isVideo ? 'video' : 'image', url, el: null, frame: null, audio: null };
+      if (isVideo) {
+        const v = document.createElement('video');
+        v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+        v.src = url;
+        for (const ev of ['play', 'pause', 'ended']) v.addEventListener(ev, updatePresentBar);
+        pool.appendChild(v); // iPhones only decode video that is in the page
+        item.el = v;
+      } else {
+        const img = new Image();
+        img.onload = () => { item.frame = fitFrame(img, img.naturalWidth, img.naturalHeight); };
+        img.onerror = () => { item.failed = true; toast("That photo couldn't be opened"); };
+        img.src = url;
+        item.el = img;
+      }
+      p.items.push(item);
+    }
+    presenterShow(first);
+  }
+
+  function fitRect(sw, sh) {
+    const s = Math.min(PW / sw, PH / sh), w = sw * s, h = sh * s;
+    return [(PW - w) / 2, (PH - h) / 2, w, h];
+  }
+  // Photos are scaled once into a 720p frame, so each redraw is a cheap copy.
+  function fitFrame(src, sw, sh) {
+    const c = document.createElement('canvas');
+    c.width = PW; c.height = PH;
+    const x = c.getContext('2d');
+    x.fillStyle = '#000'; x.fillRect(0, 0, PW, PH);
+    x.imageSmoothingQuality = 'high';
+    const [dx, dy, dw, dh] = fitRect(sw, sh);
+    x.drawImage(src, dx, dy, dw, dh);
+    return c;
+  }
+
+  function presenterDraw(p) {
+    const it = p.items[p.index];
+    const ctx = p.ctx;
+    p.tick++;
+    if (!it || (it.kind === 'image' && !it.frame)) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, PW, PH); return; }
+    if (it.kind === 'image') {
+      // A still photo only needs a few frames a second, so newcomers get a picture.
+      if (p.last === it && p.tick % 6) return;
+      ctx.drawImage(it.frame, 0, 0);
+    } else {
+      const v = it.el;
+      if (v.readyState < 2 || !v.videoWidth) return;
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, PW, PH);
+      const [dx, dy, dw, dh] = fitRect(v.videoWidth, v.videoHeight);
+      ctx.drawImage(v, dx, dy, dw, dh);
+    }
+    p.last = it;
+  }
+
+  function presenterShow(i) {
+    const p = presenter;
+    if (!p || !p.items.length) return;
+    i = Math.max(0, Math.min(p.items.length - 1, i));
+    const prev = p.items[p.index];
+    if (prev && prev.kind === 'video' && i !== p.index) prev.el.pause();
+    p.index = i;
+    p.last = null;
+    const it = p.items[i];
+    const vt = p.stream.getVideoTracks()[0];
+    if (vt) vt.contentHint = it.kind === 'video' ? 'motion' : 'detail';
+    if (it.kind === 'video') {
+      if (!it.audio && actx && p.dest) {
+        try { it.audio = actx.createMediaElementSource(it.el); it.audio.connect(p.dest); }
+        catch (e) { console.warn('video sound', e); }
+      }
+      if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+      it.el.play().catch(() => updatePresentBar());
+      if (!videoHintShown && it.audio) { videoHintShown = true; toast('Video sound plays for everyone else'); }
+    }
+    updatePresentBar();
+  }
+
+  function stopPresenter() {
+    const p = presenter;
+    if (!p) return;
+    presenter = null;
+    clearInterval(p.timer);
+    for (const it of p.items) {
+      if (it.kind === 'video') {
+        it.el.pause();
+        try { if (it.audio) it.audio.disconnect(); } catch {}
+        it.el.removeAttribute('src');
+        it.el.load();
+        it.el.remove();
+      }
+      URL.revokeObjectURL(it.url);
+    }
+    try { if (p.dest) p.dest.disconnect(); } catch {}
+    p.canvas.remove();
   }
 
   async function flipCamera() {
@@ -797,7 +1151,7 @@
     nt.enabled = local.camOn;
     nt.contentHint = 'motion';
     const mid = sfu.localMids.get('cam');
-    const tr = sfu.pc && mid ? sfu.pc.getTransceivers().find(t => t.mid === mid) : null;
+    const tr = sfu.push.pc && mid ? sfu.push.pc.getTransceivers().find(t => t.mid === mid) : null;
     if (tr) { try { await tr.sender.replaceTrack(nt); } catch (e) { console.warn('flip', e); } }
     if (old) { local.cam.removeTrack(old); old.stop(); }
     local.cam.addTrack(nt);

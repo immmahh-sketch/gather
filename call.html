@@ -93,6 +93,28 @@
     <div id="grid"></div>
   </main>
 
+  <div class="presentbar hidden" id="presentBar">
+    <span class="pb-label"><span class="pb-dot"></span><span id="pbLabel">You're sharing your screen</span></span>
+    <div class="pb-media hidden" id="pbMedia">
+      <button class="pb-btn" id="pbPrev" type="button" title="Previous (←)">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <span class="pb-count" id="pbCount"></span>
+      <button class="pb-btn" id="pbNext" type="button" title="Next (→)">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <button class="pb-btn" id="pbPlay" type="button" title="Play or pause">
+        <svg class="i-pause" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+        <svg class="i-play" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12-7.5a1 1 0 0 0 0-1.72l-12-7.5A1 1 0 0 0 7 4.5z"/></svg>
+      </button>
+      <button class="pb-btn" id="pbAdd" type="button" title="Add more photos or videos">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+    </div>
+    <button class="pb-tv on" id="pbTv" type="button" aria-pressed="true" title="Show your share edge to edge on Fire Stick TVs"><span class="pb-switch"></span>Full screen on TVs</button>
+    <button class="pb-stop" id="pbStop" type="button">Stop</button>
+  </div>
+
   <footer class="controls">
     <button class="ctl" id="micBtn" type="button" title="Mute (M)">
       <svg class="i-on" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -109,7 +131,19 @@
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="9 10 12 7 15 10"/><line x1="12" y1="7" x2="12" y2="14"/></svg>
     </button>
     <button class="ctl leave" id="leaveBtn" type="button">Leave</button>
+    <div class="sharemenu hidden" id="shareMenu" role="menu">
+      <button type="button" id="shareScreenOpt" role="menuitem">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span><strong>Share your screen</strong><small>A window, a browser tab or everything</small></span>
+      </button>
+      <button type="button" id="shareMediaOpt" role="menuitem">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        <span><strong>Share photos or videos</strong><small>From this device, with sound</small></span>
+      </button>
+    </div>
   </footer>
+  <input type="file" id="mediaInput" accept="image/*,video/*" multiple hidden>
+  <div id="presenterPool" aria-hidden="true"></div>
 </div>
 
 <!-- After leaving -->
