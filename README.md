@@ -62,3 +62,19 @@ Plain static files. Push to `main` and GitHub Pages publishes it. For local test
 3. In this repo add a file called `CNAME` containing just the domain, e.g. `gathercall.uk`, and push. GitHub Pages then serves the site there; enable **Enforce HTTPS** in the repo's Pages settings once the certificate appears.
 4. Add `https://<domain>` to `ALLOWED_ORIGINS` in `supabase/functions/gather-rtc/index.ts` and redeploy the function.
 5. Update the `og:image` URLs in `index.html` and `call.html` to the new domain.
+
+## Password
+
+The site is private. Every page asks for the password once per device (`assets/gate.js`, checked against the SHA-256 hash in `assets/config.js`), and the call server checks the real password on every request (secret `GATHER_PASSWORD` on `gather-rtc`). To change it: set the new secret, redeploy the function, and put the new hash in `config.js` (`python -c "import hashlib;print(hashlib.sha256(b'NEW').hexdigest())"`).
+
+## Fire Stick / Android TV app
+
+`tv.html` is a remote-friendly room picker; it opens `call.html?room=<name>&tv=1`, which joins with no camera or microphone, hides the controls and fills the screen with whatever is shared. The remote's Back button leaves the room.
+
+`android/` is a tiny WebView wrapper around that page. GitHub Actions (`.github/workflows/android.yml`) builds and signs it on every push that touches `android/` and publishes it as the `tv-latest` release:
+
+    https://github.com/immmahh-sketch/gather/releases/download/tv-latest/gather-tv.apk
+
+Signing key: the PKCS12 keystore and its password live in the repo's Actions secrets, with a private copy at `C:\Users\GM\Documents\gather-tv-signing.p12` and `gather-tv-signing-PASSWORD.txt`. Updates must be signed with the same key or the Fire Stick refuses to install over the old version.
+
+To sideload: on the Fire Stick enable *Apps from unknown sources* (Settings → My Fire TV → Developer options), install the *Downloader* app from the Amazon store, and enter the short link. Older sticks on Fire OS 5 have a dated browser engine and may not play the video; Fire OS 6 and 7 sticks (4K, Lite, 3rd gen) are fine.
