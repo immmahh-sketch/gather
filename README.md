@@ -17,6 +17,7 @@ Live at https://gathercall.uk (GitHub Pages, custom domain via the `CNAME` file;
 
 - Camera, microphone, mute and camera-off, front/back camera switch on phones.
 - **Share your screen** from a laptop or desktop browser. Shared screens go full-size for everyone else; pin any tile to make it big.
+- **Share live video** from any device with a camera: the back camera goes out as the shared picture, big for everyone and full screen on TVs, with a flip button for the front camera. The face tile pauses meanwhile (phones run one camera at a time, and it saves the phone's upload) and comes back when the share stops. The screen is kept awake while sharing.
 - **Share photos or videos** from any device, phones included: pick them from the camera roll and step through them with the arrows; videos play with sound for everyone else. No phone browser (Safari, Chrome or Firefox) allows a web page to capture the phone's own screen, so this is the phone equivalent.
 - **Full screen on TVs**: while sharing, the sharer's bar has a switch (on by default) that makes Fire Sticks show the share edge to edge with nothing else on screen. Off, TVs show the share with everyone's faces beside it.
 - TVs are viewers only: they get no tile and are not counted as people.

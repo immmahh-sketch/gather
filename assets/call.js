@@ -42,7 +42,7 @@
   };
 
   // ---------- state ----------
-  const local = { name: '', cam: new MediaStream(), audio: null, video: null, screen: null, screenName: null, shareKind: null, tvFull: true, facing: 'user', micOn: true, camOn: true, permissionError: null };
+  const local = { name: '', cam: new MediaStream(), audio: null, video: null, screen: null, screenName: null, shareKind: null, tvFull: true, liveCam: false, liveFacing: 'environment', facing: 'user', micOn: true, camOn: true, permissionError: null };
   try { local.tvFull = localStorage.getItem('gather.tvfull') !== '0'; } catch {}
   const peers = new Map();  // peerId -> peer
   const tiles = new Map();  // tileId -> tile
@@ -149,10 +149,14 @@
 
   function applyMediaButtons() {
     for (const b of [el.micBtn, el.preMic]) { b.classList.toggle('off', !local.micOn || !local.audio); b.disabled = !local.audio; b.title = local.audio ? (local.micOn ? 'Mute (M)' : 'Unmute (M)') : 'No microphone'; }
-    for (const b of [el.camBtn, el.preCam]) { b.classList.toggle('off', !local.camOn || !local.video); b.disabled = !local.video; b.title = local.video ? (local.camOn ? 'Camera off (V)' : 'Camera on (V)') : 'No camera'; }
+    for (const b of [el.camBtn, el.preCam]) {
+      b.classList.toggle('off', !local.camOn || !local.video || local.liveCam);
+      b.disabled = !local.video || local.liveCam;
+      b.title = local.liveCam ? 'Your camera is being shared live' : local.video ? (local.camOn ? 'Camera off (V)' : 'Camera on (V)') : 'No camera';
+    }
     el.previewWrap.classList.toggle('no-video', !(local.video && local.camOn));
     el.shareBtn.classList.toggle('on', !!local.screen);
-    el.shareBtn.title = local.screen ? 'Stop sharing' : canScreen ? 'Share' : 'Share photos or videos';
+    el.shareBtn.title = local.screen ? 'Stop sharing' : 'Share';
     updateLocalTile();
   }
 
@@ -637,6 +641,7 @@
     teardownSFU();
     if (local.screen) { local.screen.getTracks().forEach(t => t.stop()); local.screen = null; local.screenName = null; local.shareKind = null; }
     stopPresenter();
+    keepAwake(false);
     updatePresentBar();
     for (const t of local.cam.getTracks()) t.stop();
     el.call.classList.add('hidden');
@@ -659,7 +664,7 @@
     return {
       name: local.name,
       mic: !!(local.audio && local.micOn),
-      cam: !!(local.video && local.camOn),
+      cam: !!(local.video && local.camOn && !local.liveCam),
       sessionId: sfu.push.sessionId,
       tracks: sfu.published.slice(),
       screen: local.screenName || null,
@@ -706,7 +711,7 @@
         sessionId: typeof meta.sessionId === 'string' ? meta.sessionId : null,
         tracks: Array.isArray(meta.tracks) ? meta.tracks.filter(t => typeof t === 'string').slice(0, 8) : [],
         screen: typeof meta.screen === 'string' ? meta.screen : null,
-        shareKind: meta.shareKind === 'media' ? 'media' : 'screen',
+        shareKind: meta.shareKind === 'media' || meta.shareKind === 'live' ? meta.shareKind : 'screen',
         tvFull: meta.tvFull === true
       };
       if (meta.tv === true && !p.tv) { p.tv = true; removeTile(id + ':cam'); }
@@ -801,7 +806,7 @@
     const cam = tiles.get(p.id + ':cam');
     if (cam) setTileInfo(cam, { label: p.state.name, name: p.state.name, muted: !p.state.mic, noVideo: !(p.state.cam && videoLive(p.camStream)), connecting: waiting });
     const scr = tiles.get(p.id + ':screen');
-    if (scr) setTileInfo(scr, { label: p.state.shareKind === 'media' ? p.state.name + ' is presenting' : p.state.name + "'s screen", name: p.state.name, muted: false, noVideo: !videoLive(p.screenStream), connecting: false });
+    if (scr) setTileInfo(scr, { label: p.state.shareKind === 'media' ? p.state.name + ' is presenting' : p.state.shareKind === 'live' ? p.state.name + "'s live video" : p.state.name + "'s screen", name: p.state.name, muted: false, noVideo: !videoLive(p.screenStream), connecting: false });
   }
   function addLocalTile() {
     setTileStream('local:cam', local.cam, null, 'cam');
@@ -810,9 +815,9 @@
   function updateLocalTile() {
     const t = tiles.get('local:cam');
     if (!t) return;
-    setTileInfo(t, { label: 'You', name: local.name || el.nameInput.value || '?', muted: !(local.audio && local.micOn), noVideo: !(local.video && local.camOn && videoLive(local.cam)), connecting: false, mirror: local.facing === 'user' });
+    setTileInfo(t, { label: 'You', name: local.name || el.nameInput.value || '?', muted: !(local.audio && local.micOn), noVideo: local.liveCam || !(local.video && local.camOn && videoLive(local.cam)), connecting: false, mirror: local.facing === 'user' });
     const s = tiles.get('local:screen');
-    if (s) setTileInfo(s, { label: local.shareKind === 'media' ? "You're presenting" : 'Your screen', name: local.name, muted: false, noVideo: !videoLive(s.stream), connecting: false });
+    if (s) setTileInfo(s, { label: local.shareKind === 'media' ? "You're presenting" : local.shareKind === 'live' ? 'Your live video' : 'Your screen', name: local.name, muted: false, noVideo: !videoLive(s.stream), connecting: false });
   }
 
   function render() {
@@ -877,7 +882,7 @@
   el.rejoinBtn.addEventListener('click', () => location.reload());
   el.linkBtn.addEventListener('click', shareLink);
   el.shareBtn.addEventListener('click', onShareClick);
-  el.flipBtn.addEventListener('click', flipCamera);
+  el.flipBtn.addEventListener('click', () => local.shareKind === 'live' ? flipLive() : flipCamera());
   document.addEventListener('keydown', e => {
     if (!joined || e.target.matches('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'm' || e.key === 'M') setMic(!local.micOn);
@@ -900,19 +905,21 @@
   const shareMenu = $('#shareMenu'), mediaInput = $('#mediaInput'), pool = $('#presenterPool');
   const pb = {
     bar: $('#presentBar'), label: $('#pbLabel'), media: $('#pbMedia'), count: $('#pbCount'),
-    prev: $('#pbPrev'), next: $('#pbNext'), play: $('#pbPlay'), add: $('#pbAdd'), tv: $('#pbTv'), stop: $('#pbStop')
+    prev: $('#pbPrev'), next: $('#pbNext'), play: $('#pbPlay'), add: $('#pbAdd'), tv: $('#pbTv'), stop: $('#pbStop'),
+    live: $('#pbLive'), flip: $('#pbFlip')
   };
   let presenter = null, mediaAppend = false, videoHintShown = false;
 
   function onShareClick(e) {
     e.stopPropagation();
     if (local.screen) { stopShare(); return; }
-    if (!canScreen) { pickMedia(false); return; } // phones: straight to the photo picker
     shareMenu.classList.toggle('hidden');
   }
   document.addEventListener('click', e => { if (!shareMenu.contains(e.target)) shareMenu.classList.add('hidden'); });
   $('#shareScreenOpt').addEventListener('click', () => { shareMenu.classList.add('hidden'); startScreenShare(); });
   $('#shareMediaOpt').addEventListener('click', () => { shareMenu.classList.add('hidden'); pickMedia(false); });
+  $('#shareLiveOpt').addEventListener('click', () => { shareMenu.classList.add('hidden'); startLiveShare(); });
+  if (!canScreen) $('#shareScreenOpt').classList.add('hidden');
 
   function pickMedia(append) {
     ensureAudioContext(); // inside the tap, so iPhones allow the sound later
@@ -965,9 +972,11 @@
     const s = local.screen;
     if (!s) return;
     const name = local.screenName;
+    const kind = local.shareKind;
     local.screen = null; local.screenName = null; local.shareKind = null;
     s.getTracks().forEach(t => t.stop());
     stopPresenter();
+    if (kind === 'live') endLive();
     removeTile('local:screen');
     applyMediaButtons();
     updatePresentBar();
@@ -981,8 +990,10 @@
     pb.bar.classList.toggle('hidden', !sharing);
     if (!sharing) return;
     const media = local.shareKind === 'media' && !!presenter;
+    const live = local.shareKind === 'live';
     pb.media.classList.toggle('hidden', !media);
-    pb.label.textContent = media ? "You're presenting" : "You're sharing your screen";
+    pb.live.classList.toggle('hidden', !live);
+    pb.label.textContent = media ? "You're presenting" : live ? "You're sharing live video" : "You're sharing your screen";
     pb.tv.classList.toggle('on', local.tvFull);
     pb.tv.setAttribute('aria-pressed', local.tvFull ? 'true' : 'false');
     if (!media) return;
@@ -998,6 +1009,7 @@
   pb.next.addEventListener('click', () => presenter && presenterShow(presenter.index + 1));
   pb.add.addEventListener('click', () => pickMedia(true));
   pb.stop.addEventListener('click', stopShare);
+  pb.flip.addEventListener('click', flipLive);
   pb.play.addEventListener('click', () => {
     const it = presenter && presenter.items[presenter.index];
     if (!it || it.kind !== 'video') return;
@@ -1012,6 +1024,108 @@
     updatePresence();
     toast(local.tvFull ? 'TVs now show your share full screen' : 'TVs now show everyone beside your share');
   });
+
+  // ---------- live video from this device's camera ----------
+  // The camera goes out as the shared picture: big for everyone, full screen on
+  // TVs. Phones can only run one camera at a time, and sending the same picture
+  // twice would waste the phone's upload, so the face tile pauses meanwhile.
+  const liveConstraints = facing => ({ video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } } });
+  let wakeLock = null, liveCamBefore = null;
+
+  async function keepAwake(on) {
+    try {
+      if (on && !wakeLock && navigator.wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch {}
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && local.shareKind === 'live') keepAwake(true); });
+
+  function camSender() {
+    const mid = sfu.localMids.get('cam');
+    const tr = sfu.push.pc && mid ? sfu.push.pc.getTransceivers().find(t => t.mid === mid) : null;
+    return tr ? tr.sender : null;
+  }
+
+  function wireLiveTrack(t) {
+    t.contentHint = 'motion';
+    // The camera can be taken away (a phone call, another app): end the share cleanly.
+    t.addEventListener('ended', () => { if (local.shareKind === 'live' && local.screen && local.screen.getVideoTracks()[0] === t) stopShare(); });
+  }
+
+  async function startLiveShare() {
+    if (local.screen) return;
+    // Release the face camera first: phones cannot open a second camera while one is running.
+    liveCamBefore = { facing: local.facing, on: local.camOn };
+    local.liveCam = true;
+    const sender = camSender();
+    if (sender) { try { await sender.replaceTrack(null); } catch {} }
+    if (local.video) { local.cam.removeTrack(local.video); local.video.stop(); local.video = null; }
+    applyMediaButtons();
+    updatePresence();
+    let s = null;
+    local.liveFacing = 'environment';
+    try { s = await navigator.mediaDevices.getUserMedia(liveConstraints('environment')); }
+    catch (e) {
+      try { s = await navigator.mediaDevices.getUserMedia(liveConstraints('user')); local.liveFacing = 'user'; } catch {}
+    }
+    if (!s) { toast('Could not open the camera'); await endLive(); return; }
+    const vt = s.getVideoTracks()[0];
+    wireLiveTrack(vt);
+    await beginShare(new MediaStream([vt]), 'live');
+    keepAwake(true);
+    if (isTouch && innerHeight > innerWidth) toast('Turn your phone sideways to fill the TV');
+  }
+
+  async function flipLive() {
+    if (local.shareKind !== 'live' || !local.screen) return;
+    const old = local.screen.getVideoTracks()[0];
+    const want = local.liveFacing === 'environment' ? 'user' : 'environment';
+    if (old) { local.screen.removeTrack(old); old.stop(); } // one camera at a time on phones
+    let s = null, facing = want;
+    try { s = await navigator.mediaDevices.getUserMedia(liveConstraints(want)); }
+    catch {
+      toast('Could not switch camera');
+      facing = local.liveFacing;
+      try { s = await navigator.mediaDevices.getUserMedia(liveConstraints(facing)); } catch {}
+    }
+    if (!s) { stopShare(); return; }
+    const nt = s.getVideoTracks()[0];
+    wireLiveTrack(nt);
+    local.screen.addTrack(nt);
+    local.liveFacing = facing;
+    const mid = sfu.localMids.get(local.screenName);
+    const tr = sfu.push.pc && mid ? sfu.push.pc.getTransceivers().find(t => t.mid === mid) : null;
+    if (tr) { try { await tr.sender.replaceTrack(nt); } catch (e) { console.warn('flip live', e); } }
+    setTileStream('local:screen', local.screen, null, 'screen');
+  }
+
+  // After a live share: bring the face camera back as it was.
+  async function endLive() {
+    keepAwake(false);
+    const before = liveCamBefore || { facing: 'user', on: true };
+    liveCamBefore = null;
+    if (!local.liveCam) return;
+    local.facing = before.facing;
+    let s = null;
+    try { s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints() }); } catch {}
+    local.liveCam = false;
+    if (s) {
+      const nt = s.getVideoTracks()[0];
+      nt.contentHint = 'motion';
+      nt.enabled = before.on;
+      local.cam.addTrack(nt);
+      local.video = nt;
+      local.camOn = before.on;
+      const sender = camSender();
+      if (sender) { try { await sender.replaceTrack(nt); } catch (e) { console.warn('camera back', e); } }
+    } else {
+      toast('Could not turn your camera back on');
+    }
+    applyMediaButtons();
+    updatePresence();
+  }
 
   // ---------- photo and video presenter ----------
   // Draws the chosen photo or video onto a 720p canvas and sends the canvas as
