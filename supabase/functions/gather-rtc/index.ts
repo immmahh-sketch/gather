@@ -21,6 +21,8 @@ const TURN_TTL_SECONDS = 6 * 60 * 60;
 
 const CF = "https://rtc.live.cloudflare.com/v1";
 const ALLOWED_ORIGINS = [
+  "https://gathercall.uk",
+  "https://www.gathercall.uk",
   "https://immmahh-sketch.github.io",
   "http://localhost:8765",
 ];
