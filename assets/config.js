@@ -9,6 +9,10 @@ window.GATHER_CONFIG = {
   // SFU session API and hands out TURN credentials. See the README to set it up.
   RTC_ENDPOINT: 'https://safcrtrfdzsnftghibot.supabase.co/functions/v1/gather-rtc',
 
+  // SHA-256 of the site password. The pages check it to let you in; the call
+  // server checks the password itself, so this hash alone opens nothing.
+  PASSWORD_HASH: '37a93333f5e00c951a2d37baf6a5b480d44b3c2db300f117eb36669a8f2cef4f',
+
   // STUN lets a device learn its public address. Free and public.
   ICE_SERVERS: [
     { urls: 'stun:stun.cloudflare.com:3478' },

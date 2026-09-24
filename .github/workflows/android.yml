@@ -1,0 +1,53 @@
+name: Build Gather TV APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Restore signing keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/gather-tv.p12"
+
+      - name: Build signed release APK
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/gather-tv.p12
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          APP_VERSION_CODE: ${{ github.run_number }}
+          APP_VERSION_NAME: 1.${{ github.run_number }}
+        run: |
+          cd android
+          gradle assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/gather-tv.apk"
+
+      - name: Publish as the tv-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tv-latest
+          name: Gather TV for Fire Stick
+          body: |
+            Sideload this on a Fire TV Stick (or any Android TV box). It opens https://gathercall.uk/tv.html, asks for the site password once, then lets you watch any room full screen.
+
+            Direct download: https://github.com/immmahh-sketch/gather/releases/download/tv-latest/gather-tv.apk
+          files: ${{ runner.temp }}/gather-tv.apk

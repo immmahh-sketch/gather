@@ -23,6 +23,19 @@ a { color: inherit; }
 svg { display: block; }
 .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
 
+/* ---------- password gate ---------- */
+body.gated > :not(#gate) { visibility: hidden; }
+#gate { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: radial-gradient(900px 500px at 50% -10%, rgba(18, 128, 95, .35), transparent 70%), #0f1412; color: #f2f4f3; font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.gate-card { width: 100%; max-width: 380px; text-align: center; }
+.gate-card .mark { width: 64px; height: 64px; margin: 0 auto 14px; }
+.gate-card h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.02em; }
+.gate-card p { color: #9aa39e; margin: 0 0 18px; }
+.gate-card input { width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid #2a332e; background: #161c19; color: #fff; font-size: 17px; text-align: center; }
+.gate-card input:focus { outline: 2px solid #12805f; }
+.gate-err { color: #ff8a8a; font-size: 14px; min-height: 20px; margin: 8px 0; }
+.gate-card button { width: 100%; padding: 14px; border-radius: 12px; border: 0; background: #12805f; color: #fff; font-size: 17px; font-weight: 700; }
+.gate-card button:disabled { opacity: .6; }
+
 /* ---------- brand ---------- */
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 800; font-size: 20px; letter-spacing: -0.01em; color: inherit; }
 .brand .mark { width: 32px; height: 32px; border-radius: 8px; }
@@ -177,6 +190,16 @@ body.call-page { background: #0f1412; color: #f2f4f3; height: 100dvh; overflow: 
 .ctl.off .i-on { display: none; }
 .ctl.leave { width: auto; padding: 0 22px; border-radius: 27px; background: var(--danger); font-weight: 700; }
 .ctl.leave:hover { background: #c33d3d; }
+
+/* TV mode: nothing to press, bigger labels, remote's Back leaves */
+body.tv .controls, body.tv #linkBtn, body.tv .tile .pin { display: none; }
+body.tv #layout { padding: 0 12px 12px; }
+body.tv .bar { font-size: 18px; padding: 12px 18px; }
+body.tv .bar .room strong { font-size: 20px; }
+body.tv .badge { font-size: 17px; padding: 7px 14px; }
+body.tv .tile .status { font-size: 20px; }
+body.tv #left .btn { padding: 16px 26px; font-size: 20px; }
+body.tv #left .btn:focus { outline: 3px solid #3ddc84; }
 
 #toast { position: fixed; left: 50%; bottom: 96px; transform: translate(-50%, 10px); background: #fff; color: #111; padding: 10px 16px; border-radius: 999px; font-size: 14px; font-weight: 600; opacity: 0; pointer-events: none; transition: .2s; z-index: 10; max-width: calc(100% - 32px); }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }

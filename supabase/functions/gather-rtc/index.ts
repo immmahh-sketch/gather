@@ -18,6 +18,8 @@ const SFU_APP_SECRET = Deno.env.get("CF_SFU_APP_SECRET") || "";
 const TURN_KEY_ID = Deno.env.get("CF_TURN_KEY_ID") || "";
 const TURN_API_TOKEN = Deno.env.get("CF_TURN_API_TOKEN") || "";
 const TURN_TTL_SECONDS = 6 * 60 * 60;
+// Site password. The pages ask for it once per device and send it with every call.
+const GATHER_PASSWORD = Deno.env.get("GATHER_PASSWORD") || "";
 
 const CF = "https://rtc.live.cloudflare.com/v1";
 const ALLOWED_ORIGINS = [
@@ -31,7 +33,7 @@ function cors(origin: string | null) {
   const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "access-control-allow-origin": allow,
-    "access-control-allow-headers": "authorization, apikey, content-type",
+    "access-control-allow-headers": "authorization, apikey, content-type, x-gather-key",
     "access-control-allow-methods": "GET, POST, PUT, OPTIONS",
     "vary": "origin",
     "cache-control": "no-store",
@@ -77,6 +79,10 @@ Deno.serve(async (req) => {
   const headers = cors(origin);
   if (req.method === "OPTIONS") return new Response("ok", { headers });
   if (origin && !ALLOWED_ORIGINS.includes(origin)) return json({ errorCode: "forbidden", errorDescription: "Origin not allowed" }, 403, headers);
+
+  if (GATHER_PASSWORD && req.headers.get("x-gather-key") !== GATHER_PASSWORD) {
+    return json({ errorCode: "unauthorized", errorDescription: "Wrong or missing password" }, 401, headers);
+  }
 
   const url = new URL(req.url);
   // The function name is the first path segment; everything after it is ours.

@@ -28,7 +28,10 @@
 
   const myId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
   const isTouch = matchMedia('(pointer: coarse)').matches;
-  const canShare = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  // TV mode (Fire Stick app): no camera or microphone, joins by itself, watches full screen.
+  const tvMode = new URLSearchParams(location.search).get('tv') === '1';
+  const canShare = !tvMode && !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  if (tvMode) document.body.classList.add('tv');
 
   const ICON = {
     micOff: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
@@ -74,7 +77,7 @@
 
   // ---------- gather-rtc API (Cloudflare behind a Supabase edge function) ----------
   const RTC = cfg.RTC_ENDPOINT || '';
-  const authHeaders = () => ({ 'content-type': 'application/json', apikey: cfg.SUPABASE_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_KEY });
+  const authHeaders = () => ({ 'content-type': 'application/json', apikey: cfg.SUPABASE_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_KEY, 'x-gather-key': window.GATHER_KEY || '' });
   async function api(path, method, body) {
     let r;
     try { r = await fetch(RTC + path, { method, headers: authHeaders(), body: body ? JSON.stringify(body) : undefined }); }
@@ -97,6 +100,7 @@
   let rtcReachable = null;
   const icePromise = (async () => {
     if (!RTC) return;
+    if (window.GATHER_READY) await window.GATHER_READY; // wait for the password gate
     try {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 4000);
@@ -152,6 +156,14 @@
   function setCam(on) { local.camOn = on; if (local.video) local.video.enabled = on; applyMediaButtons(); updatePresence(); }
 
   async function setupPrejoin() {
+    if (tvMode) {
+      el.nameInput.value = new URLSearchParams(location.search).get('name') || 'TV';
+      el.preStatus.textContent = 'Connecting to the room…';
+      el.joinBtn.disabled = true;
+      if (window.GATHER_READY) await window.GATHER_READY;
+      join();
+      return;
+    }
     el.preAvatar.textContent = initial(el.nameInput.value || '?');
     el.preAvatar.style.setProperty('--c', colorFor(el.nameInput.value || 'x'));
     el.preview.srcObject = local.cam;
@@ -479,11 +491,12 @@
       el.joinBtn.disabled = false;
       el.joinBtn.textContent = 'Join call';
       el.preStatus.textContent = explain(e);
+      if (tvMode) { el.preStatus.textContent += ' Trying again…'; setTimeout(join, 5000); }
       return;
     }
     el.prejoin.classList.add('hidden');
     el.call.classList.remove('hidden');
-    addLocalTile();
+    if (!tvMode) addLocalTile(); // a TV has nothing to show of itself
     applyMediaButtons();
     startTimer();
     render();
