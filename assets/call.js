@@ -21,8 +21,10 @@
   const slug = s => String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
   const room = slug(new URLSearchParams(location.search).get('room'));
   if (!room) { location.replace('./'); return; }
-  const roomLink = location.origin + location.pathname + '?room=' + encodeURIComponent(room);
-  document.title = room + ' · Gather';
+  // Share links are the home page plus ?room=, which forwards here. Shorter to send.
+  const roomLink = location.origin + location.pathname.replace(/call\.html$/, '') + '?room=' + encodeURIComponent(room);
+  const roomTitle = room.split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+  document.title = roomTitle + ' · Gather';
 
   const myId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
   const isTouch = matchMedia('(pointer: coarse)').matches;
@@ -49,8 +51,8 @@
     micBtn: $('#micBtn'), camBtn: $('#camBtn'), flipBtn: $('#flipBtn'), shareBtn: $('#shareBtn'), leaveBtn: $('#leaveBtn'), linkBtn: $('#linkBtn'), rejoinBtn: $('#rejoinBtn'),
     count: $('#count'), timer: $('#timer'), toast: $('#toast'), netStatus: $('#netStatus')
   };
-  $('#roomName').textContent = room;
-  $('#preRoom').textContent = room;
+  $('#roomName').textContent = roomTitle;
+  $('#preRoom').textContent = roomTitle;
   el.nameInput.value = localStorage.getItem('gather.name') || '';
 
   // ---------- helpers ----------

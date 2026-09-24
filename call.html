@@ -3,36 +3,64 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#0e1014">
 <title>Gather</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b6cf6'/%3E%3Crect x='12' y='20' width='28' height='24' rx='5' fill='white'/%3E%3Cpath d='M42 28l12-7v22l-12-7z' fill='white'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#0f1412">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gather">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Join my video call on Gather">
+<meta property="og:description" content="Tap the link, type your name, and you're in. No accounts, nothing to install.">
+<meta property="og:image" content="https://immmahh-sketch.github.io/gather/assets/icons/social.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body class="call-page">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="markg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e9e70"/><stop offset="1" stop-color="#0a6448"/></linearGradient>
+    <symbol id="mark" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="14" fill="url(#markg)"/>
+      <g fill="#fff" stroke="url(#markg)" stroke-width="6.4" paint-order="stroke">
+        <circle cx="32" cy="25" r="11"/><circle cx="22" cy="42" r="11"/><circle cx="42" cy="42" r="11"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
 
 <!-- Pre-join -->
 <div id="prejoin" class="screen">
-  <div class="pre-card">
-    <h1>Ready to join?</h1>
-    <p class="sub">Room <strong id="preRoom"></strong></p>
-    <div class="preview" id="previewWrap">
-      <video id="preview" autoplay playsinline muted></video>
-      <div class="avatar"><span id="preAvatar">?</span></div>
-      <div class="pre-ctl">
-        <button class="ctl" id="preMic" type="button" title="Microphone">
-          <svg class="i-on" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-          <svg class="i-off" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-        </button>
-        <button class="ctl" id="preCam" type="button" title="Camera">
-          <svg class="i-on" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-          <svg class="i-off" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-        </button>
+  <header class="top"><div class="wrap"><a class="brand" href="./"><svg class="mark"><use href="#mark"/></svg><span>Gather</span></a></div></header>
+  <div class="pre-main">
+    <div class="pre-card">
+      <p class="eyebrow">You're joining</p>
+      <h1 id="preRoom"></h1>
+      <div class="preview" id="previewWrap">
+        <video id="preview" autoplay playsinline muted></video>
+        <div class="avatar"><span id="preAvatar">?</span></div>
+        <div class="pre-ctl">
+          <button class="ctl" id="preMic" type="button" title="Microphone">
+            <svg class="i-on" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <svg class="i-off" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
+          <button class="ctl" id="preCam" type="button" title="Camera">
+            <svg class="i-on" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+            <svg class="i-off" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
       </div>
+      <div class="pre-status" id="preStatus"></div>
+      <input class="name" id="nameInput" type="text" placeholder="Your name" maxlength="30" autocomplete="name" enterkeyhint="go">
+      <button class="join" id="joinBtn" type="button">Join call</button>
+      <p class="foot">Allow the camera and microphone when your browser asks. <a href="./">Back to home</a></p>
     </div>
-    <div class="pre-status" id="preStatus"></div>
-    <input class="name" id="nameInput" type="text" placeholder="Your name" maxlength="30" autocomplete="name" enterkeyhint="go">
-    <button class="join" id="joinBtn" type="button">Join call</button>
-    <p class="foot"><a href="./">Back to home</a></p>
   </div>
 </div>
 
@@ -40,6 +68,7 @@
 <div id="call" class="screen hidden">
   <header class="bar">
     <div class="room">
+      <svg class="mark small"><use href="#mark"/></svg>
       <strong id="roomName"></strong>
       <span class="pill" title="People on the call">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -50,7 +79,7 @@
     <div class="right">
       <span id="timer">00:00</span>
       <button class="linkbtn" id="linkBtn" type="button" title="Share the link to this call">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span>Invite</span>
       </button>
     </div>
@@ -84,6 +113,7 @@
 <!-- After leaving -->
 <div id="left" class="screen hidden">
   <div>
+    <a class="brand" href="./"><svg class="mark"><use href="#mark"/></svg><span>Gather</span></a>
     <h1>You left the call</h1>
     <p>The room stays open, so you can come back any time.</p>
     <div class="row">

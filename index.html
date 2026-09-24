@@ -2,55 +2,129 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#f6f3ee">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Gather – video calls for friends and family</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b6cf6'/%3E%3Crect x='12' y='20' width='28' height='24' rx='5' fill='white'/%3E%3Cpath d='M42 28l12-7v22l-12-7z' fill='white'/%3E%3C/svg%3E">
+<meta name="description" content="Video calls for the people you like. Send a link, tap it, talk. No accounts, nothing to install, up to fifteen people on phones and computers.">
+<script>
+  // A room link is just the home page with ?room=name. Send it straight to the call.
+  (function () { var r = new URLSearchParams(location.search).get('room'); if (r) location.replace('call.html?room=' + encodeURIComponent(r)); })();
+</script>
+<meta name="theme-color" content="#12805f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gather">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Gather">
+<meta property="og:description" content="Video calls for friends and family. Send a link, tap it, talk.">
+<meta property="og:image" content="https://immmahh-sketch.github.io/gather/assets/icons/social.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="markg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e9e70"/><stop offset="1" stop-color="#0a6448"/></linearGradient>
+    <symbol id="mark" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="14" fill="url(#markg)"/>
+      <g fill="#fff" stroke="url(#markg)" stroke-width="6.4" paint-order="stroke">
+        <circle cx="32" cy="25" r="11"/><circle cx="22" cy="42" r="11"/><circle cx="42" cy="42" r="11"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg class="mark"><use href="#mark"/></svg><span>Gather</span></a>
+    <a class="top-link" href="#how">How it works</a>
+  </div>
+</header>
+
 <main class="home">
-  <h1>Gather</h1>
-  <p class="tag">Video calls with the people you like. No accounts, nothing to install. Works on phones and computers.</p>
-
-  <section class="card">
-    <h2>Start a call now</h2>
-    <p>Makes a fresh room with a new link. Send the link to whoever you want on the call.</p>
-    <button class="btn primary big" id="newCall" type="button">Start a new call</button>
-  </section>
-
-  <section class="card">
-    <h2>Your permanent room</h2>
-    <p>This link never changes. Send it once and everyone can use it every time. Pick a name that is hard to guess.</p>
-    <div class="row">
-      <input class="field" id="permName" type="text" placeholder="e.g. smith-family-sundays" maxlength="40" autocapitalize="off" autocorrect="off" spellcheck="false">
+  <section class="hero wrap">
+    <div class="hero-copy">
+      <h1>Video calls for the people you like.</h1>
+      <p class="lead">Send a link, tap it, talk. Nothing to install and no accounts, on phones and computers, with room for fifteen people at once.</p>
+      <div class="cta">
+        <button class="btn primary big" id="newCall" type="button">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+          Start a call now
+        </button>
+      </div>
+      <form class="joinrow" id="joinForm">
+        <input class="field" id="joinInput" type="text" placeholder="Link or room name" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button class="btn" type="submit">Join</button>
+      </form>
     </div>
-    <div class="link-box" id="permLink"></div>
-    <div class="row">
-      <button class="btn primary" id="openPerm" type="button">Open my room</button>
-      <button class="btn" id="copyPerm" type="button">Copy link</button>
-      <button class="btn" id="sharePerm" type="button">Share…</button>
+
+    <aside class="roomcard">
+      <div class="roomcard-top">
+        <span class="eyebrow">Your permanent room</span>
+        <button class="textbtn" id="renameBtn" type="button">Rename</button>
+      </div>
+      <h2 class="roomtitle" id="permTitle"></h2>
+      <div class="rename hidden" id="renameRow">
+        <input class="field" id="permName" type="text" placeholder="e.g. smith family sundays" maxlength="40" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button class="btn" id="renameDone" type="button">Done</button>
+      </div>
+      <div class="linkchip">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <span id="permLink"></span>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="openPerm" type="button">Open room</button>
+        <button class="btn" id="copyPerm" type="button">Copy link</button>
+        <button class="btn" id="sharePerm" type="button">Share</button>
+      </div>
+      <p class="hint">The same link every time. Send it once and everyone can use it whenever you're on. Anyone with the link can join, so treat it like a phone number.</p>
+    </aside>
+  </section>
+
+  <section class="steps wrap" id="how">
+    <h2 class="section-title">How it works</h2>
+    <ol class="stepgrid">
+      <li><span class="num">1</span><div><h3>Open your room</h3><p>Or start a fresh call with a brand new link.</p></div></li>
+      <li><span class="num">2</span><div><h3>Send the link</h3><p>WhatsApp, text or email. Whatever they already use.</p></div></li>
+      <li><span class="num">3</span><div><h3>They tap it</h3><p>Type a name, allow the camera, and they're in.</p></div></li>
+    </ol>
+  </section>
+
+  <section class="features wrap">
+    <div class="feature">
+      <div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+      <h3>Fifteen people, no fuss</h3>
+      <p>Everyone in one grid, or tap a face to make it big.</p>
     </div>
-    <div class="hint">Saved on this device. Anyone with the link can join, so treat it like a phone number.</div>
+    <div class="feature">
+      <div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+      <h3>Share your screen</h3>
+      <p>Photos, a slideshow, the quiz. From a laptop or an Android phone.</p>
+    </div>
+    <div class="feature">
+      <div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></div>
+      <h3>Phones and computers</h3>
+      <p>Safari on iPhone, Chrome or Edge everywhere else. Nothing to download.</p>
+    </div>
+    <div class="feature">
+      <div class="ico"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+      <h3>Private</h3>
+      <p>Calls are encrypted and nothing is recorded or stored.</p>
+    </div>
   </section>
 
-  <section class="card">
-    <h2>Join a call</h2>
-    <p>Paste the link or room name someone sent you.</p>
-    <form class="row" id="joinForm">
-      <input class="field" id="joinInput" type="text" placeholder="Link or room name" autocapitalize="off" autocorrect="off" spellcheck="false">
-      <button class="btn primary" type="submit">Join</button>
-    </form>
-  </section>
-
-  <footer>
-    <strong>How it works</strong>
-    <ul>
-      <li>Calls are encrypted and nothing is recorded or stored.</li>
-      <li>Comfortable with fifteen or more people on a call.</li>
-      <li>Screen sharing works from a laptop or desktop, and from most Android phones. iPhones can watch a shared screen but not share their own.</li>
-      <li>Use Safari on iPhone and Chrome or Edge elsewhere. Allow the camera and microphone when asked.</li>
-    </ul>
+  <footer class="foot wrap">
+    <div class="tip">
+      <img src="assets/icons/icon-192.png" alt="">
+      <div><strong>Keep it on your phone</strong><span>Open the share menu in your browser and choose <em>Add to Home Screen</em>. Gather then opens like any other app.</span></div>
+    </div>
+    <p>Gather · made for family calls.</p>
   </footer>
 </main>
 
@@ -58,43 +132,45 @@
 (() => {
   const $ = s => document.querySelector(s);
   const slug = s => String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  const title = s => s.split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
   const base = location.origin + location.pathname.replace(/index\.html$/, '');
-  const linkFor = room => base + 'call.html?room=' + encodeURIComponent(room);
+  const linkFor = room => base + '?room=' + encodeURIComponent(room);
+  const pretty = url => url.replace(/^https?:\/\//, '');
 
   const A = ['sunny', 'cosy', 'happy', 'bright', 'merry', 'jolly', 'calm', 'lucky', 'gentle', 'breezy', 'golden', 'rosy', 'quiet', 'warm', 'clever', 'snug', 'brave', 'kind'];
   const B = ['otter', 'robin', 'maple', 'harbour', 'meadow', 'pebble', 'teapot', 'lantern', 'willow', 'clover', 'biscuit', 'kettle', 'heron', 'orchard', 'puffin', 'bramble', 'badger', 'wren'];
   const pick = arr => arr[Math.floor(Math.random() * arr.length)];
   const randomRoom = () => pick(A) + '-' + pick(B) + '-' + Math.floor(100 + Math.random() * 900);
 
-  // Start a new call
   $('#newCall').addEventListener('click', () => { location.href = linkFor(randomRoom()); });
 
   // Permanent room
-  const permName = $('#permName'), permLink = $('#permLink');
+  const permName = $('#permName'), permLink = $('#permLink'), permTitle = $('#permTitle'), renameRow = $('#renameRow');
   let perm = slug(localStorage.getItem('gather.room')) || (pick(A) + '-' + pick(B) + '-' + pick(B));
-  const savePerm = () => {
-    perm = slug(permName.value) || perm;
+  const show = () => {
     try { localStorage.setItem('gather.room', perm); } catch {}
-    permLink.textContent = linkFor(perm);
+    permTitle.textContent = title(perm);
+    permLink.textContent = pretty(linkFor(perm));
   };
-  permName.value = perm; savePerm();
-  permName.addEventListener('input', savePerm);
-  permName.addEventListener('blur', () => { permName.value = perm; savePerm(); });
-  $('#openPerm').addEventListener('click', () => { savePerm(); location.href = linkFor(perm); });
+  show();
+  $('#renameBtn').addEventListener('click', () => { permName.value = perm; renameRow.classList.remove('hidden'); permName.focus(); permName.select(); });
+  const finishRename = () => { perm = slug(permName.value) || perm; renameRow.classList.add('hidden'); show(); };
+  $('#renameDone').addEventListener('click', finishRename);
+  permName.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); finishRename(); } if (e.key === 'Escape') renameRow.classList.add('hidden'); });
+  $('#openPerm').addEventListener('click', () => { location.href = linkFor(perm); });
   $('#copyPerm').addEventListener('click', async () => {
-    savePerm();
     try { await navigator.clipboard.writeText(linkFor(perm)); $('#copyPerm').textContent = 'Copied'; setTimeout(() => $('#copyPerm').textContent = 'Copy link', 1500); }
     catch { prompt('Copy this link', linkFor(perm)); }
   });
   const shareBtn = $('#sharePerm');
   if (!navigator.share) shareBtn.classList.add('hidden');
-  shareBtn.addEventListener('click', () => { savePerm(); navigator.share({ title: 'Join my video call', text: 'Join my video call', url: linkFor(perm) }).catch(() => {}); });
+  shareBtn.addEventListener('click', () => { navigator.share({ title: 'Join my video call', text: 'Join my video call on Gather', url: linkFor(perm) }).catch(() => {}); });
 
-  // Join
+  // Join with a link or room name
   $('#joinForm').addEventListener('submit', e => {
     e.preventDefault();
     let v = $('#joinInput').value.trim();
-    try { const u = new URL(v); v = u.searchParams.get('room') || v; } catch {}
+    try { const u = new URL(v.match(/^https?:\/\//) ? v : 'https://' + v); v = u.searchParams.get('room') || v; } catch {}
     const room = slug(v);
     if (room) location.href = linkFor(room);
   });

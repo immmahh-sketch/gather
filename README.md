@@ -48,3 +48,17 @@ The function only answers requests from `https://immmahh-sketch.github.io` (and 
 ## Deploy the site
 
 Plain static files. Push to `main` and GitHub Pages publishes it. For local testing serve the folder on port 8765, e.g. `python -m http.server 8765`.
+
+## Look and feel
+
+- Logo and icons are drawn by `tools/make-icons.py` (run `python tools/make-icons.py` after changing it). It writes the favicon, the home-screen icons, the maskable Android icon and `social.png`, the picture shown when a link is pasted into WhatsApp or iMessage.
+- `manifest.webmanifest` plus the Apple meta tags make the site installable: on a phone, Share → Add to Home Screen gives a Gather icon that opens without browser chrome.
+- Share links are `https://immmahh-sketch.github.io/gather/?room=<name>`; the home page forwards them to the call. Short link: https://tinyurl.com/gathercalls
+
+## Putting it on your own domain
+
+1. Buy the domain (Cloudflare Registrar sells `.uk` and `.co.uk` at cost, about £5 a year, and you already have the account).
+2. In Cloudflare DNS for the domain add a `CNAME` record: name `@` (or `www`), target `immmahh-sketch.github.io`, proxy **off** (grey cloud).
+3. In this repo add a file called `CNAME` containing just the domain, e.g. `gathercall.uk`, and push. GitHub Pages then serves the site there; enable **Enforce HTTPS** in the repo's Pages settings once the certificate appears.
+4. Add `https://<domain>` to `ALLOWED_ORIGINS` in `supabase/functions/gather-rtc/index.ts` and redeploy the function.
+5. Update the `og:image` URLs in `index.html` and `call.html` to the new domain.
