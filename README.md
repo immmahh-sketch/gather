@@ -2,7 +2,7 @@
 
 Video calls for friends and family. No accounts, nothing to install, works on phones and computers, comfortable with fifteen or more people on a call.
 
-Live at https://immmahh-sketch.github.io/gather/
+Live at https://gathercall.uk (GitHub Pages, custom domain via the `CNAME` file; the old https://immmahh-sketch.github.io/gather/ address redirects there)
 
 ## How it works
 
@@ -53,7 +53,7 @@ Plain static files. Push to `main` and GitHub Pages publishes it. For local test
 
 - Logo and icons are drawn by `tools/make-icons.py` (run `python tools/make-icons.py` after changing it). It writes the favicon, the home-screen icons, the maskable Android icon and `social.png`, the picture shown when a link is pasted into WhatsApp or iMessage.
 - `manifest.webmanifest` plus the Apple meta tags make the site installable: on a phone, Share → Add to Home Screen gives a Gather icon that opens without browser chrome.
-- Share links are `https://immmahh-sketch.github.io/gather/?room=<name>`; the home page forwards them to the call. Short link: https://tinyurl.com/gathercalls
+- Share links are `https://gathercall.uk/?room=<name>`; the home page forwards them to the call. Short link: https://tinyurl.com/gathercalls
 
 ## Putting it on your own domain
 
