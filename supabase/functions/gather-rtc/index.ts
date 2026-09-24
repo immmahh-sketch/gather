@@ -64,7 +64,7 @@ async function forward(path: string, method: string, body: string) {
   const r = await fetch(`${CF}/apps/${SFU_APP_ID}${path}`, {
     method,
     headers: { authorization: `Bearer ${SFU_APP_SECRET}`, "content-type": "application/json" },
-    body: method === "POST" || method === "PUT" ? body : undefined,
+    body: body && (method === "POST" || method === "PUT") ? body : undefined,
   });
   const text = await r.text();
   return { status: r.status, text };
@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
       return json({ errorCode: "not_configured", errorDescription: "Cloudflare SFU secrets are not set" }, 503, headers);
     }
     if (path === "/sessions/new" && req.method === "POST") {
-      const r = await forward("/sessions/new", "POST", "{}");
+      const r = await forward("/sessions/new", "POST", ""); // Cloudflare wants no body here
       return new Response(r.text, { status: r.status, headers: { ...headers, "content-type": "application/json" } });
     }
     const m = SESSION_ROUTE.exec(path);
