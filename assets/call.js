@@ -1,9 +1,16 @@
 /* Gather – call page.
  *
- * Every participant connects directly to every other participant (a WebRTC mesh).
- * Supabase Realtime is only the meeting point: presence says who is in the room,
- * and broadcast carries the offers, answers and ICE candidates between browsers.
- * Nothing about the call itself passes through Supabase.
+ * Media goes through Cloudflare's Realtime SFU. Each person sends one copy of
+ * their camera, microphone and screen to Cloudflare and pulls everyone else's
+ * from there, so a fifteen-person call costs each device one upload rather
+ * than fourteen. Cameras are published as simulcast layers (f/h/q) and each
+ * viewer pulls the layer that fits the tile size.
+ *
+ * Supabase Realtime is the meeting point: presence says who is in the room,
+ * which Cloudflare session they hold and which tracks they publish.
+ *
+ * The gather-rtc edge function holds the Cloudflare secrets: it forwards the
+ * session API calls and mints TURN credentials.
  */
 (() => {
   'use strict';
@@ -27,7 +34,7 @@
   };
 
   // ---------- state ----------
-  const local = { name: '', cam: new MediaStream(), audio: null, video: null, screen: null, facing: 'user', micOn: true, camOn: true, permissionError: null };
+  const local = { name: '', cam: new MediaStream(), audio: null, video: null, screen: null, screenName: null, facing: 'user', micOn: true, camOn: true, permissionError: null };
   const peers = new Map();  // peerId -> peer
   const tiles = new Map();  // tileId -> tile
   const meters = new Map(); // tileId -> audio level meter
@@ -61,27 +68,54 @@
   function videoLive(stream) {
     return !!stream && stream.getVideoTracks().some(t => t.readyState === 'live' && !t.muted);
   }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // ---------- ICE servers ----------
-  // STUN comes from config. TURN credentials are fetched from the gather-turn
-  // function; if that is missing or slow the call goes ahead with STUN only.
+  // ---------- gather-rtc API (Cloudflare behind a Supabase edge function) ----------
+  const RTC = cfg.RTC_ENDPOINT || '';
+  const authHeaders = () => ({ 'content-type': 'application/json', apikey: cfg.SUPABASE_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_KEY });
+  async function api(path, method, body) {
+    let r;
+    try { r = await fetch(RTC + path, { method, headers: authHeaders(), body: body ? JSON.stringify(body) : undefined }); }
+    catch { throw new Error('unreachable'); }
+    if (r.status === 404 || r.status === 503) throw new Error('notdeployed');
+    if (!r.ok) throw new Error('server error ' + r.status);
+    const data = await r.json();
+    if (data.errorCode) throw new Error(data.errorDescription || data.errorCode);
+    return data;
+  }
+  function explain(e) {
+    const m = String((e && e.message) || e);
+    if (m === 'unreachable' || m === 'notdeployed') return 'The video server is not set up yet. Deploy the gather-rtc function (see the README in the gather repo).';
+    return 'Could not connect to the video server: ' + m;
+  }
+
+  // STUN comes from config. TURN credentials come from the function; if that is
+  // slow or missing the call goes ahead with STUN only.
   let iceServers = (cfg.ICE_SERVERS || []).slice();
+  let rtcReachable = null;
   const icePromise = (async () => {
-    if (!cfg.TURN_ENDPOINT) return;
+    if (!RTC) return;
     try {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 4000);
-      const r = await fetch(cfg.TURN_ENDPOINT, { headers: { apikey: cfg.SUPABASE_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_KEY }, signal: ctl.signal });
+      const r = await fetch(RTC + '/ice', { headers: authHeaders(), signal: ctl.signal });
       clearTimeout(timer);
+      rtcReachable = r.ok;
       if (!r.ok) return;
       const data = await r.json();
       if (Array.isArray(data.iceServers) && data.iceServers.length) iceServers = iceServers.concat(data.iceServers);
-    } catch {}
+    } catch (e) { if (e && e.name !== 'AbortError') rtcReachable = false; }
   })();
 
   // ---------- local media ----------
   const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-  const videoConstraints = () => ({ width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: local.facing });
+  const videoConstraints = () => isTouch
+    ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: local.facing }
+    : { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24, max: 30 }, facingMode: local.facing };
+  // Simulcast layers. Names sort f < h < q so Cloudflare can fall back in order.
+  const camEncodings = () => isTouch
+    ? [{ rid: 'h', maxBitrate: 500000 }, { rid: 'q', scaleResolutionDownBy: 2, maxBitrate: 150000 }]
+    : [{ rid: 'f', maxBitrate: 1200000 }, { rid: 'h', scaleResolutionDownBy: 2, maxBitrate: 400000 }, { rid: 'q', scaleResolutionDownBy: 4, maxBitrate: 150000 }];
 
   async function getMedia() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { local.permissionError = 'unsupported'; return; }
@@ -140,6 +174,7 @@
       } catch {}
     }
     if (canShare) el.shareBtn.classList.remove('hidden');
+    icePromise.then(() => { if (rtcReachable === false) el.preStatus.textContent = explain(new Error('unreachable')); });
   }
 
   el.nameInput.addEventListener('input', () => {
@@ -150,6 +185,271 @@
   el.preMic.addEventListener('click', () => setMic(!local.micOn));
   el.preCam.addEventListener('click', () => setCam(!local.camOn));
   el.joinBtn.addEventListener('click', join);
+
+  // ---------- SFU session ----------
+  const sfu = {
+    pc: null, sessionId: null, queue: Promise.resolve(),
+    pulls: new Map(),      // key sessionId/trackName -> pull
+    byMid: new Map(),      // mid -> pull
+    localMids: new Map(),  // trackName -> mid
+    published: [],         // local track names others may pull
+    screenSeq: 0, attempts: 0, reconnecting: false, reconnectTimer: null, retryTimer: null
+  };
+  // Every change to the Cloudflare session goes through one queue, so the
+  // connection is never asked to negotiate two things at once.
+  function enqueue(fn) {
+    const run = sfu.queue.then(fn, fn);
+    sfu.queue = run.catch(() => {});
+    return run;
+  }
+
+  async function connectSFU() {
+    const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
+    sfu.pc = pc; sfu.sessionId = null;
+    sfu.pulls.clear(); sfu.byMid.clear(); sfu.localMids.clear(); sfu.published = [];
+    pc.ontrack = onTrack;
+    pc.onconnectionstatechange = () => onConnState(pc);
+    const outgoing = [];
+    if (local.audio) outgoing.push({ tr: pc.addTransceiver(local.audio, { direction: 'sendonly' }), name: 'mic' });
+    if (local.video) outgoing.push({ tr: pc.addTransceiver(local.video, { direction: 'sendonly', sendEncodings: camEncodings() }), name: 'cam' });
+    if (local.screen) for (const t of local.screen.getTracks()) outgoing.push({ tr: pc.addTransceiver(t, { direction: 'sendonly' }), name: t.kind === 'video' ? local.screenName : local.screenName + '-audio' });
+    // With nothing to send we still need one media line to bring the connection up.
+    if (!outgoing.length) outgoing.push({ tr: pc.addTransceiver('audio', { direction: 'sendonly' }), name: 'idle' });
+    const { sessionId } = await api('/sessions/new', 'POST');
+    sfu.sessionId = sessionId;
+    await pushOffer(pc, outgoing);
+    await waitConnected(pc, 12000);
+    sfu.attempts = 0;
+  }
+
+  // Publish local transceivers: offer to Cloudflare, apply its answer. Mids only
+  // exist after setLocalDescription, so the track list is built after it.
+  async function pushOffer(pc, outgoing) {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const res = await api('/sessions/' + sfu.sessionId + '/tracks/new', 'POST', {
+      sessionDescription: { type: 'offer', sdp: offer.sdp },
+      tracks: outgoing.map(o => ({ location: 'local', mid: o.tr.mid, trackName: o.name }))
+    });
+    await pc.setRemoteDescription(res.sessionDescription);
+    const failed = new Set((res.tracks || []).filter(t => t.errorCode).map(t => t.trackName));
+    for (const o of outgoing) {
+      if (failed.has(o.name)) { console.warn('publish failed', o.name); continue; }
+      sfu.localMids.set(o.name, o.tr.mid);
+      if (o.name !== 'idle') sfu.published.push(o.name);
+    }
+  }
+
+  function waitConnected(pc, ms) {
+    return new Promise((resolve, reject) => {
+      if (pc.connectionState === 'connected') return resolve();
+      const timer = setTimeout(() => { pc.removeEventListener('connectionstatechange', h); reject(new Error('timed out connecting to the video server')); }, ms);
+      function h() {
+        if (pc.connectionState === 'connected') { clearTimeout(timer); pc.removeEventListener('connectionstatechange', h); resolve(); }
+        else if (pc.connectionState === 'failed') { clearTimeout(timer); pc.removeEventListener('connectionstatechange', h); reject(new Error('could not reach the video server')); }
+      }
+      pc.addEventListener('connectionstatechange', h);
+    });
+  }
+
+  function teardownSFU() {
+    if (sfu.pc) {
+      sfu.pc.ontrack = null; sfu.pc.onconnectionstatechange = null;
+      try { sfu.pc.close(); } catch {}
+    }
+    sfu.pc = null; sfu.sessionId = null;
+    sfu.pulls.clear(); sfu.byMid.clear(); sfu.localMids.clear(); sfu.published = [];
+    clearTimeout(sfu.reconnectTimer); sfu.reconnectTimer = null;
+    for (const p of peers.values()) resetPeerStreams(p);
+  }
+
+  function onConnState(pc) {
+    if (pc !== sfu.pc) return;
+    const s = pc.connectionState;
+    if (s === 'connected') { setNet(''); clearTimeout(sfu.reconnectTimer); sfu.reconnectTimer = null; }
+    else if (s === 'failed') reconnectSFU();
+    else if (s === 'disconnected') {
+      setNet('Reconnecting…');
+      if (!sfu.reconnectTimer) sfu.reconnectTimer = setTimeout(() => { if (sfu.pc === pc && pc.connectionState !== 'connected') reconnectSFU(); }, 8000);
+    }
+  }
+
+  function reconnectSFU() {
+    if (!joined || sfu.reconnecting) return;
+    sfu.reconnecting = true;
+    setNet('Reconnecting…');
+    enqueue(async () => {
+      teardownSFU();
+      await sleep(Math.min(15000, 1000 * Math.pow(2, sfu.attempts++)));
+      if (!joined) return;
+      await connectSFU();
+    }).then(() => {
+      sfu.reconnecting = false;
+      if (!joined) return;
+      setNet('');
+      updatePresence();
+      syncPulls();
+    }, e => {
+      console.warn('reconnect', e);
+      sfu.reconnecting = false;
+      if (joined) reconnectSFU();
+    });
+  }
+
+  // Stop transceivers and tell Cloudflare, with a negotiated close first and a
+  // forced close if that is refused.
+  async function closeMids(pc, mids) {
+    if (!mids.length || !sfu.sessionId) return;
+    for (const mid of mids) {
+      const tr = pc.getTransceivers().find(t => t.mid === mid);
+      if (tr) { try { tr.stop(); } catch {} }
+    }
+    const path = '/sessions/' + sfu.sessionId + '/tracks/close';
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const res = await api(path, 'PUT', { tracks: mids.map(mid => ({ mid })), sessionDescription: { type: 'offer', sdp: offer.sdp }, force: false });
+      if (res.sessionDescription) await pc.setRemoteDescription(res.sessionDescription);
+    } catch (e) {
+      console.warn('negotiated close failed, forcing', e);
+      if (pc.signalingState !== 'stable') { try { await pc.setLocalDescription({ type: 'rollback' }); } catch {} }
+      await api(path, 'PUT', { tracks: mids.map(mid => ({ mid })), force: true }).catch(() => {});
+    }
+  }
+
+  function publishLocal(entries) {
+    return enqueue(async () => {
+      const pc = sfu.pc;
+      if (!pc || !sfu.sessionId) throw new Error('not connected');
+      const outgoing = entries.map(e => ({ tr: pc.addTransceiver(e.track, Object.assign({ direction: 'sendonly' }, e.init || {})), name: e.name }));
+      await pushOffer(pc, outgoing);
+      updatePresence();
+    });
+  }
+
+  function unpublishLocal(names) {
+    return enqueue(async () => {
+      const pc = sfu.pc;
+      const mids = names.map(n => sfu.localMids.get(n)).filter(Boolean);
+      for (const n of names) sfu.localMids.delete(n);
+      sfu.published = sfu.published.filter(n => !names.includes(n));
+      updatePresence();
+      if (pc) await closeMids(pc, mids);
+    });
+  }
+
+  // ---------- pulling other people's tracks ----------
+  function wantedPulls() {
+    const wanted = new Map();
+    for (const p of peers.values()) {
+      const st = p.state;
+      if (!st.sessionId) continue;
+      for (const name of st.tracks) {
+        const key = st.sessionId + '/' + name;
+        wanted.set(key, {
+          key, peerId: p.id, sessionId: st.sessionId, trackName: name,
+          kind: name.startsWith('screen') ? 'screen' : 'cam',
+          media: (name === 'mic' || name.endsWith('-audio')) ? 'audio' : 'video'
+        });
+      }
+    }
+    return wanted;
+  }
+
+  function syncPulls() {
+    if (!sfu.pc || !sfu.sessionId || sfu.reconnecting) return;
+    enqueue(async () => {
+      const pc = sfu.pc;
+      if (!pc || !sfu.sessionId) return;
+      const wanted = wantedPulls();
+      const stale = [...sfu.pulls.values()].filter(pl => !wanted.has(pl.key));
+      const missing = [...wanted.values()].filter(w => !sfu.pulls.has(w.key));
+      if (stale.length) await closePulls(pc, stale);
+      if (missing.length) await pullTracks(pc, missing);
+    }).catch(e => { console.warn('sync', e); scheduleRetry(); });
+  }
+  function scheduleRetry() {
+    clearTimeout(sfu.retryTimer);
+    sfu.retryTimer = setTimeout(syncPulls, 2500);
+  }
+
+  async function pullTracks(pc, list) {
+    const res = await api('/sessions/' + sfu.sessionId + '/tracks/new', 'POST', {
+      tracks: list.map(w => Object.assign(
+        { location: 'remote', sessionId: w.sessionId, trackName: w.trackName },
+        w.media === 'video' && w.kind === 'cam'
+          ? { simulcast: { preferredRid: desiredRid(w.peerId), priorityOrdering: 'asciibetical', ridNotAvailable: 'asciibetical' } }
+          : {}
+      ))
+    });
+    let failed = false;
+    (res.tracks || []).forEach((t, i) => {
+      const w = list.find(x => x.trackName === t.trackName && (!t.sessionId || x.sessionId === t.sessionId)) || list[i];
+      if (!w) return;
+      if (t.errorCode || !t.mid) { console.warn('pull failed', w.trackName, t.errorDescription || t.errorCode); failed = true; return; }
+      const pull = Object.assign({}, w, { mid: t.mid, rid: w.media === 'video' && w.kind === 'cam' ? desiredRid(w.peerId) : null, track: null });
+      sfu.pulls.set(w.key, pull);
+      sfu.byMid.set(t.mid, pull);
+    });
+    if (res.requiresImmediateRenegotiation && res.sessionDescription) {
+      await pc.setRemoteDescription(res.sessionDescription);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await api('/sessions/' + sfu.sessionId + '/renegotiate', 'PUT', { sessionDescription: { type: 'answer', sdp: answer.sdp } });
+    }
+    for (const p of peers.values()) updatePeerTiles(p);
+    if (failed) scheduleRetry();
+  }
+
+  async function closePulls(pc, list) {
+    for (const pl of list) {
+      sfu.pulls.delete(pl.key); sfu.byMid.delete(pl.mid);
+      const p = peers.get(pl.peerId);
+      if (p && pl.track) { p.camStream.removeTrack(pl.track); p.screenStream.removeTrack(pl.track); refreshPeerTiles(p); }
+    }
+    await closeMids(pc, list.map(pl => pl.mid));
+  }
+
+  function onTrack(e) {
+    const pull = sfu.byMid.get(e.transceiver.mid);
+    if (!pull) return;
+    const p = peers.get(pull.peerId);
+    if (!p) return;
+    pull.track = e.track;
+    (pull.kind === 'screen' ? p.screenStream : p.camStream).addTrack(e.track);
+    e.track.addEventListener('mute', () => updatePeerTiles(p));
+    e.track.addEventListener('unmute', () => updatePeerTiles(p));
+    refreshPeerTiles(p);
+  }
+
+  // Which simulcast layer a peer's camera should arrive in, from where its tile sits.
+  function desiredRid(peerId) {
+    const t = tiles.get(peerId + ':cam');
+    const where = t && t.el.parentNode ? t.el.parentNode.id : 'grid';
+    if (where === 'stage') return 'f';
+    if (where === 'strip') return 'q';
+    const n = el.grid.children.length;
+    if (isTouch) return n <= 2 ? 'f' : 'q';
+    return n <= 2 ? 'f' : n <= 9 ? 'h' : 'q';
+  }
+  let ridTimer = null;
+  function scheduleRidUpdate() { clearTimeout(ridTimer); ridTimer = setTimeout(updateRids, 500); }
+  function updateRids() {
+    if (!sfu.pc || !sfu.sessionId) return;
+    const changes = [];
+    for (const pl of sfu.pulls.values()) {
+      if (pl.media !== 'video' || pl.kind !== 'cam') continue;
+      const want = desiredRid(pl.peerId);
+      if (want !== pl.rid) { pl.rid = want; changes.push(pl); }
+    }
+    if (!changes.length) return;
+    enqueue(async () => {
+      if (!sfu.sessionId) return;
+      await api('/sessions/' + sfu.sessionId + '/tracks/update', 'PUT', {
+        tracks: changes.map(pl => ({ location: 'remote', sessionId: pl.sessionId, trackName: pl.trackName, mid: pl.mid, simulcast: { preferredRid: pl.rid, priorityOrdering: 'asciibetical', ridNotAvailable: 'asciibetical' } }))
+      });
+    }).catch(e => console.warn('layer update', e));
+  }
 
   // ---------- join / leave ----------
   function ensureAudioContext() {
@@ -166,8 +466,19 @@
     joined = true;
     ensureAudioContext();
     el.joinBtn.disabled = true;
-    el.joinBtn.textContent = 'Joining…';
-    await icePromise; // never longer than the 4s timeout
+    el.joinBtn.textContent = 'Connecting…';
+    el.preStatus.textContent = '';
+    await icePromise;
+    try { await enqueue(connectSFU); }
+    catch (e) {
+      console.warn('connect', e);
+      teardownSFU();
+      joined = false;
+      el.joinBtn.disabled = false;
+      el.joinBtn.textContent = 'Join call';
+      el.preStatus.textContent = explain(e);
+      return;
+    }
     el.prejoin.classList.add('hidden');
     el.call.classList.remove('hidden');
     addLocalTile();
@@ -181,11 +492,12 @@
     if (!joined) return;
     joined = false;
     clearInterval(timerIv);
-    for (const id of [...peers.keys()]) removePeer(id, false);
-    stopShare();
-    for (const t of local.cam.getTracks()) t.stop();
     if (channel) { channel.untrack().catch(() => {}); supa.removeChannel(channel); }
     channel = null;
+    for (const id of [...peers.keys()]) removePeer(id, false);
+    teardownSFU();
+    if (local.screen) { local.screen.getTracks().forEach(t => t.stop()); local.screen = null; local.screenName = null; }
+    for (const t of local.cam.getTracks()) t.stop();
     el.call.classList.add('hidden');
     el.left.classList.remove('hidden');
   }
@@ -201,43 +513,36 @@
     tick(); timerIv = setInterval(tick, 1000);
   }
 
-  // ---------- signalling (Supabase Realtime) ----------
+  // ---------- presence (Supabase Realtime) ----------
   function presencePayload() {
     return {
       name: local.name,
       mic: !!(local.audio && local.micOn),
       cam: !!(local.video && local.camOn),
-      screen: local.screen ? local.screen.id : null
+      sessionId: sfu.sessionId,
+      tracks: sfu.published.slice(),
+      screen: local.screenName || null
     };
   }
   function updatePresence() { if (channel && joined && everSubscribed) channel.track(presencePayload()).catch(() => {}); }
 
   function connect() {
-    supa = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_KEY, { realtime: { params: { eventsPerSecond: 50 } } });
-    channel = supa.channel('call-' + room, { config: { presence: { key: myId }, broadcast: { self: false } } });
+    supa = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_KEY, { realtime: { params: { eventsPerSecond: 20 } } });
+    channel = supa.channel('call-' + room, { config: { presence: { key: myId } } });
     channel
       .on('presence', { event: 'sync' }, onPresenceSync)
       .on('presence', { event: 'leave' }, ({ key, currentPresences }) => {
-        if (key !== myId && !(currentPresences && currentPresences.length)) removePeer(key, true);
-      })
-      .on('broadcast', { event: 'signal' }, ({ payload }) => {
-        if (payload && payload.to === myId && payload.from) onSignal(payload).catch(e => console.warn('signal', e));
+        if (key !== myId && !(currentPresences && currentPresences.length)) { removePeer(key, true); syncPulls(); }
       })
       .subscribe(async status => {
         if (status === 'SUBSCRIBED') {
-          if (everSubscribed) for (const id of [...peers.keys()]) removePeer(id, false); // rebuild after a reconnect
           everSubscribed = true;
-          setNet('');
+          if (!sfu.reconnecting) setNet('');
           await channel.track(presencePayload());
         } else if (joined && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')) {
           setNet('Reconnecting…');
         }
       });
-  }
-
-  function send(to, data) {
-    if (!channel) return;
-    channel.send({ type: 'broadcast', event: 'signal', payload: Object.assign({ from: myId, to }, data) }).catch(() => {});
   }
 
   function onPresenceSync() {
@@ -248,183 +553,53 @@
       let p = peers.get(id);
       if (!p) p = createPeer(id);
       const wasSeen = p.seen; p.seen = true;
-      p.state = { name: String(meta.name || 'Guest').slice(0, 30), mic: meta.mic !== false, cam: meta.cam !== false, screen: meta.screen || null };
-      if (p.state.screen) p.screenIds.add(p.state.screen);
-      // The peer with the larger id makes the first offer; the other waits for it.
-      if (!p.pc && myId > id) createPC(p, true);
+      const prevSession = p.state.sessionId;
+      p.state = {
+        name: String(meta.name || 'Guest').slice(0, 30),
+        mic: meta.mic !== false,
+        cam: meta.cam !== false,
+        sessionId: typeof meta.sessionId === 'string' ? meta.sessionId : null,
+        tracks: Array.isArray(meta.tracks) ? meta.tracks.filter(t => typeof t === 'string').slice(0, 8) : [],
+        screen: typeof meta.screen === 'string' ? meta.screen : null
+      };
+      if (prevSession && prevSession !== p.state.sessionId) resetPeerStreams(p);
       if (!wasSeen) toast(p.state.name + ' joined');
-      classify(p);
+      updatePeerTiles(p);
     }
     for (const [id, p] of peers) if (p.seen && !state[id]) removePeer(id, true);
     render();
+    syncPulls();
   }
 
   // ---------- peers ----------
   function createPeer(id) {
     const p = {
-      id, pc: null, polite: myId < id, makingOffer: false, ignoreOffer: false, seen: false, addedLocal: false,
-      state: { name: 'Guest', mic: true, cam: true, screen: null },
-      streams: new Map(), screenIds: new Set(), cands: [], candTimer: null, pending: [], failTimer: null
+      id, seen: false,
+      state: { name: 'Guest', mic: true, cam: true, sessionId: null, tracks: [], screen: null },
+      camStream: new MediaStream(), screenStream: new MediaStream()
     };
     peers.set(id, p);
-    setTileStream(id + ':cam', null, p, 'cam');
+    setTileStream(id + ':cam', p.camStream, p, 'cam');
     return p;
   }
-
-  function createPC(p, initiator) {
-    const pc = new RTCPeerConnection({ iceServers });
-    p.pc = pc;
-    pc.onnegotiationneeded = async () => {
-      try {
-        p.makingOffer = true;
-        await pc.setLocalDescription();
-        send(p.id, { description: pc.localDescription });
-      } catch (e) { console.warn('offer', e); }
-      finally { p.makingOffer = false; }
-    };
-    pc.onicecandidate = ({ candidate }) => { if (candidate) queueCandidate(p, candidate.toJSON()); else flushCandidates(p); };
-    pc.ontrack = e => onTrack(p, e);
-    pc.onconnectionstatechange = () => onConnState(p);
-    if (initiator) {
-      pc.addTransceiver(local.audio || 'audio', { direction: 'sendrecv', streams: [local.cam] });
-      pc.addTransceiver(local.video || 'video', { direction: 'sendrecv', streams: [local.cam], sendEncodings: [{ maxBitrate: 1200000 }] });
-      if (local.screen) for (const t of local.screen.getTracks()) pc.addTrack(t, local.screen);
-      p.addedLocal = true;
-    }
+  function resetPeerStreams(p) {
+    p.camStream = new MediaStream();
+    p.screenStream = new MediaStream();
+    refreshPeerTiles(p);
+  }
+  function refreshPeerTiles(p) {
+    setTileStream(p.id + ':cam', p.camStream, p, 'cam');
+    if (p.screenStream.getTracks().length) setTileStream(p.id + ':screen', p.screenStream, p, 'screen'); else removeTile(p.id + ':screen');
     updatePeerTiles(p);
+    render();
   }
-
-  // Called by the answering side once the first offer has arrived: addTrack reuses
-  // the transceivers the offer created, so no extra renegotiation is needed.
-  function addLocalTracks(p) {
-    if (p.addedLocal || !p.pc) return;
-    p.addedLocal = true;
-    for (const t of local.cam.getTracks()) p.pc.addTrack(t, local.cam);
-    if (local.screen) for (const t of local.screen.getTracks()) p.pc.addTrack(t, local.screen);
-  }
-
-  function closePC(p) {
-    if (p.pc) {
-      p.pc.onnegotiationneeded = p.pc.onicecandidate = p.pc.ontrack = p.pc.onconnectionstatechange = null;
-      try { p.pc.close(); } catch {}
-      p.pc = null;
-    }
-    p.addedLocal = false; p.makingOffer = false; p.ignoreOffer = false;
-    p.streams.clear(); p.pending = []; p.cands = [];
-    clearTimeout(p.candTimer); p.candTimer = null;
-    clearTimeout(p.failTimer); p.failTimer = null;
-    removeTile(p.id + ':screen');
-    setTileStream(p.id + ':cam', null, p, 'cam');
-  }
-
   function removePeer(id, announce) {
     const p = peers.get(id);
     if (!p) return;
-    closePC(p);
     removeTile(id + ':cam');
     removeTile(id + ':screen');
     peers.delete(id);
     if (announce && p.seen) toast(p.state.name + ' left');
-    render();
-  }
-
-  function onConnState(p) {
-    if (!p.pc) return;
-    const s = p.pc.connectionState;
-    updatePeerTiles(p);
-    if (s === 'connected') { clearTimeout(p.failTimer); p.failTimer = null; tuneSenders(p); }
-    if (s === 'failed') {
-      try { p.pc.restartIce(); } catch {}
-      clearTimeout(p.failTimer);
-      p.failTimer = setTimeout(() => {
-        if (p.pc && p.pc.connectionState !== 'connected' && myId > p.id) { closePC(p); createPC(p, true); }
-      }, 8000);
-    }
-  }
-
-  function tuneSenders(p) {
-    if (!p.pc) return;
-    for (const s of p.pc.getSenders()) {
-      if (!s.track || s.track.kind !== 'video') continue;
-      const isScreen = local.screen && local.screen.getTracks().includes(s.track);
-      setMaxBitrate(s, isScreen ? 2500000 : 1200000);
-    }
-  }
-  function setMaxBitrate(sender, bps) {
-    try {
-      const prm = sender.getParameters();
-      if (!prm.encodings || !prm.encodings.length) return;
-      if (prm.encodings[0].maxBitrate === bps) return;
-      prm.encodings[0].maxBitrate = bps;
-      sender.setParameters(prm).catch(() => {});
-    } catch {}
-  }
-
-  // Perfect negotiation (https://w3c.github.io/webrtc-pc/#perfect-negotiation-example)
-  async function onSignal(msg) {
-    let p = peers.get(msg.from);
-    if (!p) p = createPeer(msg.from);
-    if (msg.description) {
-      const d = msg.description;
-      if (!p.pc) { if (d.type !== 'offer') return; createPC(p, false); }
-      const pc = p.pc;
-      const collision = d.type === 'offer' && (p.makingOffer || pc.signalingState !== 'stable');
-      p.ignoreOffer = !p.polite && collision;
-      if (p.ignoreOffer) return;
-      await pc.setRemoteDescription(d);
-      for (const c of p.pending.splice(0)) await addCand(p, c);
-      if (d.type === 'offer') {
-        addLocalTracks(p);
-        await pc.setLocalDescription();
-        send(p.id, { description: pc.localDescription });
-        tuneSenders(p);
-      }
-    }
-    if (msg.candidates) {
-      for (const c of msg.candidates) {
-        if (p.pc && p.pc.remoteDescription) await addCand(p, c); else p.pending.push(c);
-      }
-    }
-  }
-  async function addCand(p, c) {
-    try { await p.pc.addIceCandidate(c); } catch (e) { if (!p.ignoreOffer) console.warn('ice', e); }
-  }
-  function queueCandidate(p, c) {
-    p.cands.push(c);
-    if (!p.candTimer) p.candTimer = setTimeout(() => flushCandidates(p), 120);
-  }
-  function flushCandidates(p) {
-    clearTimeout(p.candTimer); p.candTimer = null;
-    if (p.cands.length) send(p.id, { candidates: p.cands.splice(0) });
-  }
-
-  // ---------- incoming media ----------
-  function onTrack(p, e) {
-    const stream = e.streams[0] || new MediaStream([e.track]);
-    if (!p.streams.has(stream.id)) {
-      p.streams.set(stream.id, stream);
-      stream.addEventListener('removetrack', () => {
-        if (!stream.getTracks().length) { p.streams.delete(stream.id); classify(p); }
-      });
-    }
-    e.track.addEventListener('mute', () => updatePeerTiles(p));
-    e.track.addEventListener('unmute', () => updatePeerTiles(p));
-    e.track.addEventListener('ended', () => classify(p));
-    classify(p);
-  }
-
-  // Decide which of a peer's streams is the camera and which is a shared screen.
-  function classify(p) {
-    const screenId = p.state.screen;
-    let cam = null, screen = null;
-    for (const s of p.streams.values()) {
-      if (screenId && s.id === screenId) { screen = s; p.screenIds.add(s.id); }
-      else if (p.screenIds.has(s.id)) continue;
-      else if (!cam) cam = s;
-    }
-    setTileStream(p.id + ':cam', cam, p, 'cam');
-    if (screen) setTileStream(p.id + ':screen', screen, p, 'screen'); else removeTile(p.id + ':screen');
-    updatePeerTiles(p);
     render();
   }
 
@@ -450,9 +625,8 @@
     if (t.stream !== stream) {
       t.stream = stream;
       t.video.srcObject = stream;
-      if (stream) t.video.play().catch(() => {});
     }
-    if (stream) watchAudio(id, stream, t.el);
+    if (stream) { t.video.play().catch(() => {}); watchAudio(id, stream, t.el); }
     return t;
   }
   function removeTile(id) {
@@ -475,11 +649,11 @@
     t.el.classList.toggle('mirror', !!info.mirror);
   }
   function updatePeerTiles(p) {
-    const connected = !!p.pc && (p.pc.connectionState === 'connected' || p.pc.connectionState === 'completed');
+    const waiting = !!p.state.sessionId && p.state.tracks.length > 0 && p.camStream.getTracks().length === 0;
     const cam = tiles.get(p.id + ':cam');
-    if (cam) setTileInfo(cam, { label: p.state.name, name: p.state.name, muted: !p.state.mic, noVideo: !(p.state.cam && videoLive(cam.stream)), connecting: !connected });
+    if (cam) setTileInfo(cam, { label: p.state.name, name: p.state.name, muted: !p.state.mic, noVideo: !(p.state.cam && videoLive(p.camStream)), connecting: waiting });
     const scr = tiles.get(p.id + ':screen');
-    if (scr) setTileInfo(scr, { label: p.state.name + "'s screen", name: p.state.name, muted: false, noVideo: !videoLive(scr.stream), connecting: false });
+    if (scr) setTileInfo(scr, { label: p.state.name + "'s screen", name: p.state.name, muted: false, noVideo: !videoLive(p.screenStream), connecting: false });
   }
   function addLocalTile() {
     setTileStream('local:cam', local.cam, null, 'cam');
@@ -508,9 +682,14 @@
     }
     const n = el.grid.children.length;
     const portrait = innerHeight > innerWidth;
-    const cols = n <= 1 ? 1 : n <= 2 ? (portrait ? 1 : 2) : n <= 4 ? 2 : n <= 6 ? (portrait ? 2 : 3) : n <= 9 ? 3 : 4;
+    let cols;
+    if (portrait) cols = n <= 2 ? 1 : n <= 6 ? 2 : 3;
+    else cols = n <= 1 ? 1 : n <= 2 ? 2 : n <= 4 ? 2 : n <= 6 ? 3 : n <= 12 ? 4 : n <= 20 ? 5 : 6;
+    // On a phone, more than six tiles scroll rather than shrink to nothing.
+    el.grid.classList.toggle('scroll', portrait && n > 6);
     el.grid.style.setProperty('--cols', cols);
     el.count.textContent = peers.size + 1;
+    scheduleRidUpdate();
   }
   window.addEventListener('resize', render);
 
@@ -566,49 +745,45 @@
     try { s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: true }); }
     catch (e) { if (e.name !== 'NotAllowedError') toast('Could not share your screen'); return; }
     local.screen = s;
+    local.screenName = 'screen-' + (++sfu.screenSeq) + '-' + myId.slice(0, 4);
     const vt = s.getVideoTracks()[0];
     if (vt) { vt.contentHint = 'detail'; vt.addEventListener('ended', stopShare); }
-    updatePresence(); // tell everyone which stream id is the screen before the tracks arrive
-    for (const p of peers.values()) {
-      if (!p.pc) continue;
-      for (const t of s.getTracks()) p.pc.addTrack(t, s);
-    }
     setTileStream('local:screen', s, null, 'screen');
     applyMediaButtons();
     render();
+    const entries = s.getTracks().map(t => ({
+      track: t,
+      name: t.kind === 'video' ? local.screenName : local.screenName + '-audio',
+      init: t.kind === 'video' ? { sendEncodings: [{ maxBitrate: 2500000 }] } : {}
+    }));
+    try { await publishLocal(entries); }
+    catch (e) { console.warn('share', e); toast('Could not share your screen'); stopShare(); }
   }
 
   function stopShare() {
     const s = local.screen;
     if (!s) return;
-    local.screen = null;
-    for (const p of peers.values()) {
-      if (!p.pc) continue;
-      for (const sender of p.pc.getSenders()) {
-        if (sender.track && s.getTracks().includes(sender.track)) { try { p.pc.removeTrack(sender); } catch {} }
-      }
-    }
+    const name = local.screenName;
+    local.screen = null; local.screenName = null;
     s.getTracks().forEach(t => t.stop());
     removeTile('local:screen');
-    updatePresence();
     applyMediaButtons();
     render();
+    unpublishLocal([name, name + '-audio']).catch(e => console.warn('unshare', e));
   }
 
   async function flipCamera() {
     const facing = local.facing === 'user' ? 'environment' : 'user';
     let s;
-    try { s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); }
+    try { s = await navigator.mediaDevices.getUserMedia({ video: Object.assign(videoConstraints(), { facingMode: facing }) }); }
     catch { toast('Could not switch camera'); return; }
     const nt = s.getVideoTracks()[0];
     const old = local.video;
     nt.enabled = local.camOn;
     nt.contentHint = 'motion';
-    for (const p of peers.values()) {
-      if (!p.pc) continue;
-      const sender = p.pc.getSenders().find(x => x.track === old);
-      if (sender) { try { await sender.replaceTrack(nt); } catch {} }
-    }
+    const mid = sfu.localMids.get('cam');
+    const tr = sfu.pc && mid ? sfu.pc.getTransceivers().find(t => t.mid === mid) : null;
+    if (tr) { try { await tr.sender.replaceTrack(nt); } catch (e) { console.warn('flip', e); } }
     if (old) { local.cam.removeTrack(old); old.stop(); }
     local.cam.addTrack(nt);
     local.video = nt;
