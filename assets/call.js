@@ -19,12 +19,17 @@
 
   // ---------- room ----------
   const slug = s => String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-  const room = slug(new URLSearchParams(location.search).get('room'));
+  // A join-only page (the quiz night one) fixes the room itself: no room in the
+  // address to edit, no sharing, no files. Just join, talk and watch.
+  const JOIN = window.GATHER_JOIN || null;
+  const joinOnly = !!JOIN;
+  const room = joinOnly ? slug(JOIN.room) : slug(new URLSearchParams(location.search).get('room'));
   if (!room) { location.replace('./'); return; }
   // Share links are the home page plus ?room=, which forwards here. Shorter to send.
-  const roomLink = location.origin + location.pathname.replace(/call\.html$/, '') + '?room=' + encodeURIComponent(room);
-  const roomTitle = room.split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
-  document.title = roomTitle + ' · Gather';
+  const roomLink = joinOnly ? location.origin + location.pathname : location.origin + location.pathname.replace(/call\.html$/, '') + '?room=' + encodeURIComponent(room);
+  const roomTitle = joinOnly && JOIN.title ? JOIN.title : room.split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+  document.title = roomTitle + (joinOnly ? '' : ' · Gather');
+  if (joinOnly) document.body.classList.add('joinonly');
 
   const myId = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
   const isTouch = matchMedia('(pointer: coarse)').matches;
@@ -33,7 +38,8 @@
   // Live screen capture only exists in desktop browsers. Every device can share
   // photos and videos instead, so the share button shows everywhere except TVs.
   const canScreen = !tvMode && !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
-  const canShare = !tvMode;
+  const canShare = !tvMode && !joinOnly;
+  const noFiles = tvMode || joinOnly;
   if (tvMode) document.body.classList.add('tv');
 
   const ICON = {
@@ -48,6 +54,14 @@
   const tiles = new Map();  // tileId -> tile
   const meters = new Map(); // tileId -> audio level meter
   let supa = null, channel = null, joined = false, everSubscribed = false, pinned = null, timerIv = null, actx = null;
+  // Layout: 'everyone' is the grid (or a shared screen with everyone beside it);
+  // 'speaker' is the shared screen or whoever is talking, big, with the talker
+  // and you beside it. The quiz page starts in speaker view.
+  const VIEW_KEY = 'gather.view.' + (joinOnly ? 'join' : 'call');
+  let view = joinOnly ? 'speaker' : 'everyone';
+  try { const v = localStorage.getItem(VIEW_KEY); if (v === 'speaker' || v === 'everyone') view = v; } catch {}
+  let speaker = null;       // tile id of the remote camera doing the talking
+  local.hand = null;        // when this device raised its hand
 
   // ---------- elements ----------
   const el = {
@@ -56,7 +70,9 @@
     preMic: $('#preMic'), preCam: $('#preCam'), preStatus: $('#preStatus'),
     stage: $('#stage'), strip: $('#strip'), grid: $('#grid'),
     micBtn: $('#micBtn'), camBtn: $('#camBtn'), flipBtn: $('#flipBtn'), shareBtn: $('#shareBtn'), leaveBtn: $('#leaveBtn'), linkBtn: $('#linkBtn'), rejoinBtn: $('#rejoinBtn'),
-    count: $('#count'), timer: $('#timer'), toast: $('#toast'), netStatus: $('#netStatus')
+    count: $('#count'), timer: $('#timer'), toast: $('#toast'), netStatus: $('#netStatus'),
+    handBtn: $('#handBtn'), hands: $('#handsPill'), handsCount: $('#handsCount'), offstage: $('#offstage'),
+    viewEveryone: $('#viewEveryone'), viewSpeaker: $('#viewSpeaker')
   };
   $('#roomName').textContent = roomTitle;
   $('#preRoom').textContent = roomTitle;
@@ -601,7 +617,7 @@
     const t = tiles.get(peerId + ':cam');
     const where = t && t.el.parentNode ? t.el.parentNode.id : 'grid';
     if (where === 'stage') return 'f';
-    if (where === 'strip') return 'q';
+    if (where === 'strip' || where === 'offstage') return 'q';
     const n = el.grid.children.length;
     if (isTouch) return n <= 2 ? 'f' : 'q';
     return n <= 2 ? 'f' : n <= 9 ? 'h' : 'q';
@@ -676,6 +692,8 @@
     keepAwake(false);
     if (standIn) { standIn.stop(); standIn = null; }
     local.liveCam = false;
+    local.hand = null;
+    el.handBtn.classList.remove('on');
     updatePresentBar();
     setFilesOpen(false);
     for (const t of local.cam.getTracks()) t.stop();
@@ -706,6 +724,7 @@
       tracks: pushLive() ? sfu.published.slice() : [],
       screen: local.screenName || null,
       shareKind: local.shareKind,
+      hand: local.hand,
       tv: tvMode, // TVs watch only, so nobody gives them a tile
       // Whether TVs should show this share edge to edge with nothing else on screen.
       tvFull: !!(local.screen && local.tvFull)
@@ -718,7 +737,7 @@
     channel = supa.channel('call-' + room, { config: { presence: { key: myId } } });
     channel
       .on('presence', { event: 'sync' }, onPresenceSync)
-      .on('broadcast', { event: 'file' }, ({ payload }) => { if (!tvMode) addShared(payload, true); })
+      .on('broadcast', { event: 'file' }, ({ payload }) => { if (!noFiles) addShared(payload, true); })
       .on('presence', { event: 'leave' }, ({ key, currentPresences }) => {
         if (key !== myId && !(currentPresences && currentPresences.length)) { removePeer(key, true); syncPulls(); }
       })
@@ -742,7 +761,7 @@
       let p = peers.get(id);
       if (!p) p = createPeer(id);
       const wasSeen = p.seen; p.seen = true;
-      const prevSession = p.state.sessionId;
+      const prevSession = p.state.sessionId, prevHand = p.state.hand;
       p.state = {
         name: String(meta.name || 'Guest').slice(0, 30),
         mic: meta.mic !== false,
@@ -751,11 +770,13 @@
         tracks: Array.isArray(meta.tracks) ? meta.tracks.filter(t => typeof t === 'string').slice(0, 8) : [],
         screen: typeof meta.screen === 'string' ? meta.screen : null,
         shareKind: meta.shareKind === 'media' || meta.shareKind === 'live' ? meta.shareKind : 'screen',
-        tvFull: meta.tvFull === true
+        tvFull: meta.tvFull === true,
+        hand: typeof meta.hand === 'number' ? meta.hand : null
       };
       if (meta.tv === true && !p.tv) { p.tv = true; removeTile(id + ':cam'); }
       if (prevSession && prevSession !== p.state.sessionId) resetPeerStreams(p);
-      if (!wasSeen) toast(p.tv ? 'A TV is watching' : p.state.name + ' joined');
+      if (!wasSeen) toast(p.tv ? 'A TV is watching' : p.state.name + ' joined' + (p.state.hand ? ' with a hand up' : ''));
+      else if (p.state.hand && !prevHand) toast('✋ ' + p.state.name + ' raised a hand');
       updatePeerTiles(p);
     }
     for (const [id, p] of peers) if (p.seen && !state[id]) removePeer(id, true);
@@ -767,7 +788,7 @@
   function createPeer(id) {
     const p = {
       id, seen: false,
-      state: { name: 'Guest', mic: true, cam: true, sessionId: null, tracks: [], screen: null, shareKind: 'screen', tvFull: false },
+      state: { name: 'Guest', mic: true, cam: true, sessionId: null, tracks: [], screen: null, shareKind: 'screen', tvFull: false, hand: null },
       camStream: new MediaStream(), screenStream: new MediaStream()
     };
     peers.set(id, p);
@@ -801,13 +822,17 @@
     if (t) return t;
     const wrap = document.createElement('div');
     wrap.className = 'tile';
+    wrap.dataset.id = id;
     wrap.dataset.kind = opts.kind;
     wrap.innerHTML = '<video autoplay playsinline></video><div class="avatar"><span></span></div><div class="status">Connecting…</div>' +
+      '<div class="hand" title="Hand raised">✋<b></b></div>' +
       '<div class="badge"><span class="mic-off">' + ICON.micOff + '</span><span class="label"></span></div>' +
       '<button class="pin" type="button" title="Make this big">' + ICON.pin + '</button>';
     const video = wrap.querySelector('video');
     if (opts.self) { video.muted = true; video.setAttribute('muted', ''); }
     wrap.querySelector('.pin').addEventListener('click', ev => { ev.stopPropagation(); pinned = pinned === id ? null : id; render(); });
+    // Tapping anyone who is not already the big picture makes them big.
+    wrap.addEventListener('click', () => { if (!tvMode && wrap.parentNode !== el.stage) { pinned = id; render(); } });
     t = { id, el: wrap, video, stream: null, peerId: opts.peerId, kind: opts.kind, self: !!opts.self };
     tiles.set(id, t);
     return t;
@@ -861,10 +886,20 @@
 
   function render() {
     const all = [...tiles.values()];
-    let stageId = pinned && tiles.has(pinned) ? pinned : null;
-    if (!stageId) {
-      const shared = all.filter(t => t.kind === 'screen' && !t.self);
-      if (shared.length) stageId = shared[shared.length - 1].id;
+    if (speaker && !tiles.has(speaker)) speaker = null;
+    const shares = all.filter(t => t.kind === 'screen' && !t.self);
+    const latestShare = shares.length ? shares[shares.length - 1].id : null;
+    let stageId = pinned && tiles.has(pinned) ? pinned : latestShare;
+    // Speaker view: the big picture is the pinned tile, else the newest shared
+    // screen, else whoever is talking. Beside it: the shared screen (if it is
+    // not the big one), the talker, and you. Everyone else waits off screen,
+    // still heard.
+    let side = null; // tile ids for the strip, in order; null means everyone
+    if (view === 'speaker' && !tvMode) {
+      const cams = all.filter(t => t.kind === 'cam' && !t.self);
+      const talker = speaker || (cams.length ? cams[0].id : null);
+      if (!stageId) stageId = talker;
+      side = [latestShare, talker, 'local:screen', 'local:cam'].filter((id, i, a) => id && id !== stageId && tiles.has(id) && a.indexOf(id) === i);
     }
     el.call.classList.toggle('has-stage', !!stageId);
     if (tvMode) {
@@ -874,9 +909,13 @@
       document.body.classList.toggle('tv-full', !!(owner && owner.state.tvFull));
     }
     for (const t of all) {
-      const target = t.id === stageId ? el.stage : (stageId ? el.strip : el.grid);
+      const target = t.id === stageId ? el.stage : !stageId ? el.grid : !side || side.includes(t.id) ? el.strip : el.offstage;
       if (t.el.parentNode !== target) { target.appendChild(t.el); if (t.stream) t.video.play().catch(() => {}); }
       t.el.classList.toggle('pinned', pinned === t.id);
+    }
+    if (side && [...el.strip.children].map(n => n.dataset.id).join() !== side.join()) {
+      // Keep the strip in a steady order: share, talker, you.
+      for (const id of side) { const t = tiles.get(id); el.strip.appendChild(t.el); if (t.stream) t.video.play().catch(() => {}); }
     }
     const n = el.grid.children.length;
     const portrait = innerHeight > innerWidth;
@@ -887,6 +926,7 @@
     el.grid.classList.toggle('scroll', portrait && n > 6);
     el.grid.style.setProperty('--cols', cols);
     el.count.textContent = [...peers.values()].filter(q => !q.tv).length + (tvMode ? 0 : 1);
+    renderHands();
     scheduleRidUpdate();
   }
   window.addEventListener('resize', render);
@@ -905,19 +945,87 @@
     } catch {}
   }
   setInterval(() => {
+    let loudest = null, top = 0;
     for (const [id, m] of meters) {
-      if (!tiles.has(id)) { meters.delete(id); continue; }
+      const t = tiles.get(id);
+      if (!t) { meters.delete(id); continue; }
       m.an.getByteTimeDomainData(m.buf);
       let sum = 0;
       for (let i = 0; i < m.buf.length; i++) { const d = (m.buf[i] - 128) / 128; sum += d * d; }
-      m.el.classList.toggle('speaking', Math.sqrt(sum / m.buf.length) > 0.04);
+      const rms = Math.sqrt(sum / m.buf.length);
+      m.el.classList.toggle('speaking', rms > 0.04);
+      // Rises at once and fades over a second or so, so the pauses between
+      // words do not count as stopping.
+      m.level = Math.max(rms, (m.level || 0) * 0.85);
+      if (!t.self && t.kind === 'cam' && m.level > top) { loudest = id; top = m.level; }
     }
+    followSpeaker(top > 0.04 ? loudest : null);
   }, 200);
+
+  // Who the speaker view follows. Someone has to be the loudest for a moment
+  // before the picture moves, and the current speaker keeps it for at least
+  // two seconds, so a cough or a laugh does not throw it about.
+  let speakerSince = 0, candidate = null, candidateSince = 0;
+  function followSpeaker(id) {
+    const now = Date.now();
+    if (!id || id === speaker) { candidate = null; return; }
+    if (id !== candidate) { candidate = id; candidateSince = now; }
+    if (now - candidateSince < 700) return;
+    if (speaker && tiles.has(speaker) && now - speakerSince < 2000) return;
+    speaker = id; speakerSince = now; candidate = null;
+    if (view === 'speaker') render();
+  }
+
+  // ---------- layout ----------
+  function setView(v, announce) {
+    view = v;
+    pinned = null;
+    try { localStorage.setItem(VIEW_KEY, v); } catch {}
+    showView();
+    render();
+    if (announce) toast(v === 'speaker' ? 'Following whoever is talking' : 'Showing everyone');
+  }
+  el.viewEveryone.addEventListener('click', () => setView('everyone', true));
+  el.viewSpeaker.addEventListener('click', () => setView('speaker', true));
+  function showView() {
+    el.viewEveryone.classList.toggle('on', view === 'everyone');
+    el.viewSpeaker.classList.toggle('on', view === 'speaker');
+    el.viewEveryone.setAttribute('aria-pressed', view === 'everyone');
+    el.viewSpeaker.setAttribute('aria-pressed', view === 'speaker');
+  }
+  showView();
+
+  // ---------- raised hands ----------
+  function setHand(up) {
+    local.hand = up ? Date.now() : null;
+    el.handBtn.classList.toggle('on', up);
+    el.handBtn.setAttribute('aria-pressed', up);
+    el.handBtn.title = up ? 'Lower your hand (H)' : 'Raise your hand (H)';
+    updatePresence();
+    render();
+    toast(up ? 'Your hand is up' : 'Hand lowered');
+  }
+  // A hand on everyone with one up, numbered in the order they went up.
+  function renderHands() {
+    const up = [];
+    if (local.hand) up.push({ id: 'local:cam', at: local.hand });
+    for (const p of peers.values()) if (p.state.hand && !p.tv) up.push({ id: p.id + ':cam', at: p.state.hand });
+    up.sort((a, b) => a.at - b.at);
+    const order = new Map(up.map((h, i) => [h.id, i + 1]));
+    for (const t of tiles.values()) {
+      const n = t.kind === 'cam' ? order.get(t.id) : undefined;
+      t.el.classList.toggle('hand-up', !!n);
+      t.el.querySelector('.hand b').textContent = n && up.length > 1 ? n : '';
+    }
+    el.hands.classList.toggle('hidden', !up.length);
+    el.handsCount.textContent = up.length;
+  }
 
   // ---------- controls ----------
   el.micBtn.addEventListener('click', () => setMic(!local.micOn));
   el.camBtn.addEventListener('click', () => setCam(!local.camOn));
   el.leaveBtn.addEventListener('click', leave);
+  el.handBtn.addEventListener('click', () => setHand(!local.hand));
   el.rejoinBtn.addEventListener('click', () => location.reload());
   el.linkBtn.addEventListener('click', shareLink);
   el.shareBtn.addEventListener('click', onShareClick);
@@ -926,6 +1034,8 @@
     if (!joined || e.target.matches('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'm' || e.key === 'M') setMic(!local.micOn);
     if (e.key === 'v' || e.key === 'V') setCam(!local.camOn);
+    if (e.key === 'h' || e.key === 'H') setHand(!local.hand);
+    if (e.key === 'g' || e.key === 'G') setView(view === 'speaker' ? 'everyone' : 'speaker', true);
     if (presenter && e.key === 'ArrowLeft') presenterShow(presenter.index - 1);
     if (presenter && e.key === 'ArrowRight') presenterShow(presenter.index + 1);
   });
@@ -1058,7 +1168,7 @@
   }
 
   async function loadFiles() {
-    if (tvMode || shared.loaded) return;
+    if (noFiles || shared.loaded) return;
     shared.loaded = true;
     if (window.GatherUpload) window.GatherUpload.maxBytes(api).then(n => { maxFile = n; const m = $('#filesMax'); if (m) m.textContent = window.GatherUpload.sizeLabel(n); });
     try {
@@ -1123,15 +1233,15 @@
   // Drag files anywhere onto the call to send them (computers).
   let dragDepth = 0;
   const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
-  window.addEventListener('dragenter', e => { if (!joined || tvMode || !hasFiles(e)) return; e.preventDefault(); dragDepth++; fl.drop.classList.remove('hidden'); });
-  window.addEventListener('dragover', e => { if (!joined || tvMode || !hasFiles(e)) return; e.preventDefault(); });
+  window.addEventListener('dragenter', e => { if (!joined || noFiles || !hasFiles(e)) return; e.preventDefault(); dragDepth++; fl.drop.classList.remove('hidden'); });
+  window.addEventListener('dragover', e => { if (!joined || noFiles || !hasFiles(e)) return; e.preventDefault(); });
   window.addEventListener('dragleave', e => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) fl.drop.classList.add('hidden'); });
   window.addEventListener('drop', e => {
     if (!hasFiles(e)) return;
     e.preventDefault();
     dragDepth = 0;
     fl.drop.classList.add('hidden');
-    if (joined && !tvMode) sendFiles([...e.dataTransfer.files]);
+    if (joined && !noFiles) sendFiles([...e.dataTransfer.files]);
   });
   // Keep "5 min ago" honest while the panel is open.
   setInterval(() => { if (shared.open && !shared.list.some(f => f.uploading)) renderFiles(); }, 60000);

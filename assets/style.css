@@ -353,3 +353,37 @@ body.tv #left .btn:focus { outline: 3px solid #3ddc84; }
 #left .btn:hover { background: #262f2a; }
 #left .btn.primary { background: var(--brand); border-color: var(--brand); }
 #left .btn.primary:hover { background: #159a72; }
+
+/* Raised hands */
+.bar .pill.hands { background: #f4b53f; color: #1a1300; }
+.ctl.hand.on { background: #f4b53f; color: #1a1300; }
+.tile .hand { position: absolute; top: 10px; left: 10px; z-index: 2; display: none; align-items: center; gap: 4px; background: #f4b53f; color: #1a1300; border-radius: 999px; padding: 4px 10px; font-size: 16px; font-weight: 800; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); animation: handup .35s ease-out; }
+.tile .hand b:empty { display: none; }
+.tile.hand-up .hand { display: inline-flex; }
+.tile.hand-up { box-shadow: inset 0 0 0 3px #f4b53f; }
+@keyframes handup { from { transform: translateY(8px) scale(.6); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Layout switch: everyone / follow the speaker */
+.viewtoggle { display: inline-flex; background: #1e2622; border-radius: 999px; padding: 3px; gap: 2px; flex: 0 0 auto; }
+.viewtoggle button { width: 34px; height: 30px; border: 0; border-radius: 999px; background: transparent; color: #9aa39e; display: grid; place-items: center; }
+.viewtoggle button:hover { color: #fff; }
+.viewtoggle button.on { background: var(--brand); color: #fff; }
+#offstage { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+#stage .tile, #strip .tile, #grid .tile { cursor: pointer; }
+#stage .tile { cursor: default; }
+body.tv .viewtoggle, body.tv .tile .hand b { display: none; }
+
+/* Join-only (quiz night): no sharing, no files, nowhere else to go */
+body.joinonly #shareBtn, body.joinonly #shareMenu, body.joinonly #filesBtn, body.joinonly .filespanel,
+body.joinonly .drophint, body.joinonly #prejoin .foot a, body.joinonly #left .row a { display: none; }
+
+@media (max-width: 420px) {
+  .controls { gap: 8px; }
+  .ctl { width: 48px; height: 48px; }
+  .ctl.leave { padding: 0 16px; border-radius: 24px; }
+  .bar { gap: 6px; padding-left: 10px; padding-right: 10px; }
+  .bar .right { gap: 6px; }
+  .linkbtn { padding: 8px 10px; }
+  .linkbtn span { display: none; }
+  .viewtoggle button { width: 30px; }
+}

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Let's Quiz</title>
+<meta name="theme-color" content="#0f1412">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="../assets/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Let's Quiz">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Quiz night: join the call">
+<meta property="og:description" content="Tap the link, type your name, and you're in. No accounts, nothing to install.">
+<meta property="og:image" content="https://gathercall.uk/assets/icons/social.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/config.js"></script>
+<script src="../assets/gate.js"></script>
+<script>
+  // Join-only: this page always joins the quiz room. There is no room in the
+  // address to change, and sharing and files are switched off.
+  window.GATHER_JOIN = { room: 'lets-quiz', title: "Let's Quiz" };
+</script>
+</head>
+<body class="call-page">
+<div id="loading" class="screen"><p>Loading…</p></div>
+<script>
+  // The call screen is the normal Gather one, borrowed from call.html so the
+  // two never drift apart.
+  (async () => {
+    const box = document.getElementById('loading');
+    try {
+      const r = await fetch('../call.html', { cache: 'no-cache' });
+      if (!r.ok) throw new Error(r.status);
+      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+      doc.querySelectorAll('script').forEach(s => s.remove());
+      box.remove();
+      document.body.insertAdjacentHTML('afterbegin', doc.body.innerHTML);
+      const scripts = ['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js', '../assets/upload.js', '../assets/call.js'];
+      for (const src of scripts) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = src; s.onload = resolve; s.onerror = reject;
+          document.body.appendChild(s);
+        });
+      }
+    } catch (e) {
+      box.innerHTML = '<div><h1>Could not load the quiz</h1><p>Check your internet connection and try again.</p><div class="row"><button class="btn primary" type="button" onclick="location.reload()">Try again</button></div></div>';
+    }
+  })();
+</script>
+</body>
+</html>
