@@ -203,7 +203,12 @@
 
   // ---------- sending ----------
   let chosen = [], sending = false;
-  function setChosen(files) {
+  async function setChosen(files) {
+    // Before turning a big file away, make sure the limit is current.
+    if (files.some(f => f && f.size > maxFile)) {
+      maxFile = await window.GatherUpload.maxBytes(api);
+      el.max.textContent = window.GatherUpload.sizeLabel(maxFile);
+    }
     chosen = files.filter(f => f && f.size >= 0);
     const big = chosen.filter(f => f.size > maxFile);
     if (big.length) toast(big.map(f => f.name).join(', ') + (big.length > 1 ? ' are' : ' is') + ' over ' + window.GatherUpload.sizeLabel(maxFile));

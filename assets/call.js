@@ -1093,6 +1093,10 @@
     if (!shared.open) setFilesOpen(true);
     for (const file of list) {
       if (!file.size) { toast(file.name + ' is empty'); continue; }
+      if (file.size > maxFile) {
+        maxFile = await window.GatherUpload.maxBytes(api); // make sure the limit is current first
+        const m = $('#filesMax'); if (m) m.textContent = window.GatherUpload.sizeLabel(maxFile);
+      }
       if (file.size > maxFile) { toast(file.name + ' is over ' + window.GatherUpload.sizeLabel(maxFile)); continue; }
       const temp = { name: file.name, size: file.size, type: file.type, from: local.name, mine: true, at: Date.now(), uploading: true, progress: 0 };
       shared.list.unshift(temp);

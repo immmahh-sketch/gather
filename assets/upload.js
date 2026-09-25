@@ -90,13 +90,14 @@
     } finally { active--; }
   }
 
-  // How big a file can be right now (20 GB with R2, 50 MB without).
+  // How big a file can be right now (20 GB with R2, 50 MB without). Only a real
+  // answer is remembered; after a blip (say, just after a password change) the
+  // next call asks again instead of sticking at the fallback.
   let limits = null;
   async function maxBytes(api) {
-    if (!limits) {
-      try { limits = await api('/upload/limits', 'GET'); } catch { limits = { maxBytes: 50 * 1024 * 1024 }; }
-    }
-    return limits.maxBytes;
+    if (limits) return limits.maxBytes;
+    try { limits = await api('/upload/limits', 'GET'); return limits.maxBytes; }
+    catch { return 50 * 1024 * 1024; }
   }
   function sizeLabel(n) {
     return n >= 1024 * 1024 * 1024 ? Math.round(n / 1024 / 1024 / 1024) + ' GB' : Math.round(n / 1024 / 1024) + ' MB';
