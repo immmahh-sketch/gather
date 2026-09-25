@@ -30,6 +30,7 @@
 //   CF_SFU_APP_ID, CF_SFU_APP_SECRET   Realtime → SFU → your application
 //   CF_TURN_KEY_ID, CF_TURN_API_TOKEN  Realtime → TURN → your key (optional)
 //   GATHER_PASSWORD                    the site password
+//   GATHER_QUIZ_PASSWORD               the quiz night page's password (calls only)
 // Deploy with `npx.cmd supabase functions deploy gather-rtc --no-verify-jwt`.
 
 const SFU_APP_ID = Deno.env.get("CF_SFU_APP_ID") || "";
@@ -39,6 +40,9 @@ const TURN_API_TOKEN = Deno.env.get("CF_TURN_API_TOKEN") || "";
 const TURN_TTL_SECONDS = 6 * 60 * 60;
 // Site password. The pages ask for it once per device and send it with every call.
 const GATHER_PASSWORD = Deno.env.get("GATHER_PASSWORD") || "";
+// The quiz night page has its own password. It only opens video calls: no files,
+// no people list, no inbox.
+const GATHER_QUIZ_PASSWORD = Deno.env.get("GATHER_QUIZ_PASSWORD") || "";
 
 const CF = "https://rtc.live.cloudflare.com/v1";
 const ALLOWED_ORIGINS = [
@@ -489,13 +493,16 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers });
   if (origin && !ALLOWED_ORIGINS.includes(origin)) return json({ errorCode: "forbidden", errorDescription: "Origin not allowed" }, 403, headers);
 
-  if (GATHER_PASSWORD && req.headers.get("x-gather-key") !== GATHER_PASSWORD) {
-    return json({ errorCode: "unauthorized", errorDescription: "Wrong or missing password" }, 401, headers);
-  }
-
   const url = new URL(req.url);
   // The function name is the first path segment; everything after it is ours.
   const path = url.pathname.replace(/^.*?\/gather-rtc/, "") || "/";
+
+  if (GATHER_PASSWORD) {
+    const key = req.headers.get("x-gather-key");
+    const callsOnly = path === "/ice" || path.startsWith("/sessions/");
+    const ok = key === GATHER_PASSWORD || (callsOnly && !!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD);
+    if (!ok) return json({ errorCode: "unauthorized", errorDescription: "Wrong or missing password" }, 401, headers);
+  }
 
   try {
     if (path === "/ice" && req.method === "GET") {

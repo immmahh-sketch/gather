@@ -11,7 +11,10 @@ window.GATHER_CONFIG = {
 
   // SHA-256 of the site password. The pages check it to let you in; the call
   // server checks the password itself, so this hash alone opens nothing.
-  PASSWORD_HASH: '252721522b1bc367143955a6dc7efe9f776ba008b4352477fa6f3d219bdb2450',
+  PASSWORD_HASH: '37a93333f5e00c951a2d37baf6a5b480d44b3c2db300f117eb36669a8f2cef4f',
+  // SHA-256 of the quiz night password. It opens the quiz page (calls only);
+  // the site password works there too.
+  QUIZ_PASSWORD_HASH: '252721522b1bc367143955a6dc7efe9f776ba008b4352477fa6f3d219bdb2450',
 
   // STUN lets a device learn its public address. Free and public.
   ICE_SERVERS: [
