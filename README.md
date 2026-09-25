@@ -78,6 +78,8 @@ Plain static files. Push to `main` and GitHub Pages publishes it. For local test
 
 The site is private. Every page asks for the password once per device (`assets/gate.js`, checked against the SHA-256 hash in `assets/config.js`), and the call server checks the real password on every request (secret `GATHER_PASSWORD` on `gather-rtc`). To change it: set the new secret, redeploy the function, and put the new hash in `config.js` (`python -c "import hashlib;print(hashlib.sha256(b'NEW').hexdigest())"`).
 
+The quiz night page (`quiz/`) has a second password: secret `GATHER_QUIZ_PASSWORD`, hash `QUIZ_PASSWORD_HASH`. It only opens video calls (`/ice` and `/sessions/*`), not files, people or inboxes. The site password works on the quiz page too. Passwords with spaces must be set with `npx.cmd supabase secrets set --env-file <file>`, since quoted arguments get split.
+
 ## Fire Stick / Android TV app
 
 `tv.html` is a remote-friendly room picker; it opens `call.html?room=<name>&tv=1`, which joins with no camera or microphone, hides the controls and fills the screen with whatever is shared. The remote's Back button leaves the room.
