@@ -1,4 +1,4 @@
-name: Build desktop apps (Gather for Windows, Let's Quiz for Windows and Mac)
+name: Build desktop apps (Gather for Windows, Let's Quiz for Windows and Mac, Let's Quiz Host for Windows)
 
 on:
   push:
@@ -30,6 +30,10 @@ jobs:
             os: macos-latest
             args: --mac
             out: Lets-Quiz-Mac.dmg
+          - app: host
+            os: windows-latest
+            args: --win nsis
+            out: Lets-Quiz-Host-Setup.exe
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -93,3 +97,16 @@ jobs:
           files: |
             out/Lets-Quiz-Setup.exe
             out/Lets-Quiz-Mac.dmg
+
+      - name: Publish Let's Quiz Host for Windows (quiz-host-latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: quiz-host-latest
+          name: Let's Quiz Host for Windows
+          body: |
+            The quizmaster's app: the Let's Quiz builder and host screen (https://letsquiz.uk) in its own window. Its "Launch the quiz call" button puts the quiz screen and its sound into the quiz night call (gathercall.uk/quiz) in one click, with no screen picker.
+
+            Download and run: https://github.com/immmahh-sketch/gather/releases/download/quiz-host-latest/Lets-Quiz-Host-Setup.exe
+
+            It installs for the current user (no admin needed) and adds Start menu and desktop shortcuts. It isn't code-signed, so the first time Windows says it protected your PC: click More info, then Run anyway.
+          files: out/Lets-Quiz-Host-Setup.exe

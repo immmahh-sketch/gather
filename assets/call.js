@@ -776,7 +776,7 @@
       };
       if (meta.tv === true && !p.tv) { p.tv = true; removeTile(id + ':cam'); }
       if (prevSession && prevSession !== p.state.sessionId) resetPeerStreams(p);
-      if (!wasSeen) toast(p.tv ? 'A TV is watching' : p.state.name + ' joined' + (p.state.hand ? ' with a hand up' : ''));
+      if (!wasSeen) toast(meta.quiz === true ? '🎉 The quiz screen is on' : p.tv ? 'A TV is watching' : p.state.name + ' joined' + (p.state.hand ? ' with a hand up' : ''));
       else if (p.state.hand && !prevHand) toast('✋ ' + p.state.name + ' raised a hand');
       updatePeerTiles(p);
     }

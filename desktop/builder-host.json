@@ -1,0 +1,36 @@
+{
+  "appId": "uk.letsquiz.host",
+  "productName": "Let's Quiz Host",
+  "extraMetadata": {
+    "productName": "Let's Quiz Host",
+    "gatherApp": {
+      "host": true
+    }
+  },
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "main.js",
+    "picker.html",
+    "picker.js",
+    "picker-preload.js",
+    "icon.ico",
+    "quiz-icon.ico",
+    "host-icon.ico"
+  ],
+  "win": {
+    "target": [
+      "nsis"
+    ],
+    "icon": "host-icon.ico",
+    "artifactName": "Lets-Quiz-Host-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Let's Quiz Host"
+  }
+}

@@ -1,8 +1,11 @@
-/* Gather desktop apps – a window onto https://gathercall.uk.
+/* Gather desktop apps – a window onto https://gathercall.uk (or letsquiz.uk).
  *
- * Two apps come from this one file (see builder-*.json):
+ * Three apps come from this one file (see builder-*.json):
  *   - Gather (Windows): the whole site, for hosting calls and quiz night;
- *   - Let's Quiz (Windows and Mac): straight onto the join-only quiz page.
+ *   - Let's Quiz (Windows and Mac): straight onto the join-only quiz page;
+ *   - Let's Quiz Host (Windows): the quiz builder and host screen at
+ *     https://letsquiz.uk. Its "Launch the quiz call" button shares this
+ *     window and its sound into the quiz call with no picker: one click.
  *
  * The site does the work. This wrapper adds what a browser tab can't:
  *   - its own screen picker (Electron has none built in), with an option to
@@ -15,13 +18,16 @@
 const { app, BrowserWindow, Menu, session, desktopCapturer, shell, ipcMain, systemPreferences } = require('electron');
 const path = require('path');
 
-// The quiz build sets gatherApp.quiz in its packaged package.json.
-const QUIZ = !!(require('./package.json').gatherApp || {}).quiz;
-const NAME = QUIZ ? 'Let\'s Quiz' : 'Gather';
-const SITE = 'https://gathercall.uk';
-const HOME = SITE + (QUIZ ? '/quiz/' : '/');
-const QUIZ_HOST = SITE + '/?room=lets-quiz';
-const ICON = path.join(__dirname, QUIZ ? 'quiz-icon.ico' : 'icon.ico');
+// The quiz and host builds set gatherApp.quiz / gatherApp.host in their packaged package.json.
+const FLAGS = require('./package.json').gatherApp || {};
+const HOST = !!FLAGS.host;
+const QUIZ = !HOST && !!FLAGS.quiz;
+const NAME = HOST ? 'Let\'s Quiz Host' : QUIZ ? 'Let\'s Quiz' : 'Gather';
+const SITE = HOST ? 'https://letsquiz.uk' : 'https://gathercall.uk';
+const OWN = HOST ? [SITE, 'https://www.letsquiz.uk'] : [SITE];
+const HOME = SITE + (HOST ? '/' : QUIZ ? '/quiz/' : '/');
+const QUIZ_HOST = 'https://gathercall.uk/?room=lets-quiz';
+const ICON = path.join(__dirname, HOST ? 'host-icon.ico' : QUIZ ? 'quiz-icon.ico' : 'icon.ico');
 const MAC = process.platform === 'darwin';
 let win = null;
 
@@ -32,9 +38,9 @@ app.on('second-instance', () => {
   win.focus();
 });
 
-const isOwn = url => { try { return new URL(url).origin === SITE; } catch { return false; } };
+const isOwn = url => { try { return OWN.includes(new URL(url).origin); } catch { return false; } };
 
-// What gathercall.uk may use. Everything else, and every other site, is refused.
+// What the app's own site may use. Everything else, and every other site, is refused.
 const ALLOWED = new Set(['media', 'display-capture', 'fullscreen', 'clipboard-sanitized-write', 'clipboard-read', 'notifications', 'wake-lock', 'screen-wake-lock', 'speaker-selection']);
 
 function offlinePage() {
@@ -47,9 +53,10 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1280, height: 820, minWidth: 360, minHeight: 520,
     title: NAME,
-    backgroundColor: '#0f1412',
+    backgroundColor: HOST ? '#1a0f3d' : '#0f1412',
     icon: MAC ? undefined : ICON,
     autoHideMenuBar: true,
+    // The quiz timers and the shared picture must keep going when the window is behind others.
     webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false }
   });
   win.loadURL(HOME);
@@ -120,6 +127,13 @@ app.whenReady().then(async () => {
   ses.setPermissionCheckHandler((wc, permission, origin) => isOwn(origin) && ALLOWED.has(permission));
   ses.setDisplayMediaRequestHandler((request, callback) => {
     if (!isOwn(request.securityOrigin)) return callback(null);
+    // The host app only ever shares itself: the quiz screen and its own sound
+    // (music, sound effects), never the rest of the computer. No picker.
+    if (HOST) {
+      const frame = request.frame;
+      if (!frame) return callback(null);
+      return callback(request.audioRequested ? { video: frame, audio: frame } : { video: frame });
+    }
     pickSource(request.audioRequested).then(choice => {
       if (!choice) return callback(null); // closed or cancelled: the page carries on without sharing
       const streams = { video: choice.source };
@@ -129,7 +143,11 @@ app.whenReady().then(async () => {
     }).catch(() => callback(null));
   });
 
-  const siteItems = QUIZ ? [] : [
+  const siteItems = HOST ? [
+    { label: 'Quiz builder', accelerator: 'Alt+Home', click: () => win && win.loadURL(HOME) },
+    { label: 'Open the quiz call page', click: () => shell.openExternal('https://gathercall.uk/quiz/') },
+    { type: 'separator' }
+  ] : QUIZ ? [] : [
     { label: 'Home', accelerator: 'Alt+Home', click: () => win && win.loadURL(HOME) },
     { label: 'Quiz night (host)', click: () => win && win.loadURL(QUIZ_HOST) },
     { type: 'separator' }

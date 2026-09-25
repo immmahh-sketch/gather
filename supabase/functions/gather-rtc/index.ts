@@ -31,6 +31,8 @@
 //   CF_TURN_KEY_ID, CF_TURN_API_TOKEN  Realtime → TURN → your key (optional)
 //   GATHER_PASSWORD                    the site password
 //   GATHER_QUIZ_PASSWORD               the quiz night page's password (calls only)
+//   QUIZ_HOST_PASSWORD                 Let's Quiz host password (set for quiz-api; calls only,
+//                                      so the quiz host screen can join the call from letsquiz.uk)
 // Deploy with `npx.cmd supabase functions deploy gather-rtc --no-verify-jwt`.
 
 const SFU_APP_ID = Deno.env.get("CF_SFU_APP_ID") || "";
@@ -43,6 +45,8 @@ const GATHER_PASSWORD = Deno.env.get("GATHER_PASSWORD") || "";
 // The quiz night page has its own password. It only opens video calls: no files,
 // no people list, no inbox.
 const GATHER_QUIZ_PASSWORD = Deno.env.get("GATHER_QUIZ_PASSWORD") || "";
+// Let's Quiz's host page puts its screen into the quiz call with the host password.
+const QUIZ_HOST_PASSWORD = Deno.env.get("QUIZ_HOST_PASSWORD") || "";
 
 const CF = "https://rtc.live.cloudflare.com/v1";
 const ALLOWED_ORIGINS = [
@@ -50,6 +54,10 @@ const ALLOWED_ORIGINS = [
   "https://www.gathercall.uk",
   "https://immmahh-sketch.github.io",
   "http://localhost:8765",
+  // Let's Quiz: the host screen joins the quiz call (see live-quiz assets/quizcall.js).
+  "https://letsquiz.uk",
+  "https://www.letsquiz.uk",
+  "http://localhost:8787",
 ];
 
 function cors(origin: string | null) {
@@ -500,7 +508,7 @@ Deno.serve(async (req) => {
   if (GATHER_PASSWORD) {
     const key = req.headers.get("x-gather-key");
     const callsOnly = path === "/ice" || path.startsWith("/sessions/");
-    const ok = key === GATHER_PASSWORD || (callsOnly && !!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD);
+    const ok = key === GATHER_PASSWORD || (callsOnly && ((!!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD) || (!!QUIZ_HOST_PASSWORD && key === QUIZ_HOST_PASSWORD)));
     if (!ok) return json({ errorCode: "unauthorized", errorDescription: "Wrong or missing password" }, 401, headers);
   }
 

@@ -2,7 +2,7 @@
   "name": "gather-desktop",
   "productName": "Gather",
   "version": "1.0.0",
-  "description": "Gather and Let's Quiz desktop apps",
+  "description": "Gather, Let's Quiz and Let's Quiz Host desktop apps",
   "main": "main.js",
   "author": "Gather",
   "license": "UNLICENSED",
@@ -10,7 +10,8 @@
   "scripts": {
     "start": "electron .",
     "dist:gather": "electron-builder --config builder-gather.json --win nsis --publish never",
-    "dist:quiz": "electron-builder --config builder-quiz.json --publish never"
+    "dist:quiz": "electron-builder --config builder-quiz.json --publish never",
+    "dist:host": "electron-builder --config builder-host.json --win nsis --publish never"
   },
   "devDependencies": {
     "electron": "^37.0.0",

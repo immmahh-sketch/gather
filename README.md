@@ -102,16 +102,18 @@ The same wrapper has a second build (product flavour `quiz`, app id `uk.gatherca
 
 ## Desktop apps (Windows and Mac)
 
-`desktop/` is one Electron app built two ways (`builder-gather.json`, `builder-quiz.json`; the quiz build sets `gatherApp.quiz` in its packaged package.json):
+`desktop/` is one Electron app built three ways (`builder-gather.json`, `builder-quiz.json`, `builder-host.json`; the quiz and host builds set `gatherApp.quiz` / `gatherApp.host` in their packaged package.json):
 
 - **Gather** for Windows: a window onto https://gathercall.uk with a screen picker (Electron has none of its own) that has a *Share computer sound* option, sending everything the PC plays (Windows loopback audio) so quiz music and videos are heard. The menu (press Alt) has Home and *Quiz night (host)*.
 - **Let's Quiz** for Windows and Mac: opens straight onto `quiz/`. The Mac build is a universal dmg (Apple silicon and Intel), ad-hoc signed, and asks for camera and microphone on first launch.
+- **Let's Quiz Host** for Windows: the quizmaster's app, a window onto https://letsquiz.uk (builder and host screen). The host screen's *Launch the quiz call* button (live-quiz `assets/quizcall.js`) calls `getDisplayMedia`, and this app answers it with its own window and its own sound (`request.frame` for both), so there is no picker: one click. The same button works in a normal browser (Chrome offers only this tab, so it's one click on *Share*). It publishes to Cloudflare through `gather-rtc` with the Let's Quiz host password (secret `QUIZ_HOST_PASSWORD`, accepted for `/ice` and `/sessions/*` only, from letsquiz.uk and localhost:8787) and joins presence on `call-lets-quiz` as `{name: "Let's Quiz", tv: true, quiz: true, tvFull: true}`, so it has no tile of its own and TVs show it full screen.
 
-Both allow the camera and microphone for gathercall.uk only; other links and file downloads open in the normal browser. GitHub Actions (`.github/workflows/desktop.yml`) builds all three on every push that touches `desktop/` and publishes:
+Both allow the camera and microphone for gathercall.uk only; other links and file downloads open in the normal browser. GitHub Actions (`.github/workflows/desktop.yml`) builds all four on every push that touches `desktop/` and publishes:
 
     https://github.com/immmahh-sketch/gather/releases/download/win-latest/Gather-Setup.exe
     https://github.com/immmahh-sketch/gather/releases/download/quiz-app-latest/Lets-Quiz-Setup.exe
     https://github.com/immmahh-sketch/gather/releases/download/quiz-app-latest/Lets-Quiz-Mac.dmg
+    https://github.com/immmahh-sketch/gather/releases/download/quiz-host-latest/Lets-Quiz-Host-Setup.exe
 
 None are code-signed (paid Microsoft and Apple certificates), so Windows SmartScreen and macOS Gatekeeper warn the first time. The apps load the live site, so site changes reach them without reinstalling.
 
