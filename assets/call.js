@@ -193,7 +193,55 @@
   function setMic(on) { local.micOn = on; if (local.audio) local.audio.enabled = on; applyMediaButtons(); updatePresence(); }
   function setCam(on) { local.camOn = on; if (local.video) local.video.enabled = on; applyMediaButtons(); updatePresence(); }
 
+  // ---------- quiz night doors (join-only page) ----------
+  // Players can't go in until the quiz screen is being shared into the room:
+  // the Let's Quiz host app (presence quiz: true) or the quizmaster sharing
+  // from the full site (players themselves can't share). Until then a "coming
+  // soon" notice covers the page, and it opens by itself the moment the share
+  // starts. It's checked in the page, so the browser, the Windows and Mac apps
+  // and the Fire Stick app all behave the same. Once in, nobody is thrown out
+  // if the share drops for a moment.
+  function quizIsOn(state) {
+    for (const metas of Object.values(state)) for (const m of metas) if (m && typeof m.screen === 'string' && m.screen) return true;
+    return false;
+  }
+  function waitForQuiz() {
+    if (!joinOnly || JOIN.doors === false || !window.supabase) return Promise.resolve();
+    const soon = document.createElement('div');
+    soon.id = 'soon';
+    soon.className = 'soon checking';
+    soon.innerHTML = '<div class="soon-card"><img src="/assets/icons/quiz-192.png" alt=""><h1></h1><p class="soon-when"></p><p class="soon-note"></p></div>';
+    soon.querySelector('h1').textContent = JOIN.soonTitle || 'Coming soon!';
+    soon.querySelector('.soon-when').textContent = JOIN.soonText || '';
+    const note = soon.querySelector('.soon-note');
+    note.textContent = 'Checking whether the quiz is on…';
+    document.body.appendChild(soon);
+    return new Promise(resolve => {
+      // Watch the room without joining it: this page never announces itself,
+      // so people waiting here don't show up in the call.
+      const client = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_KEY);
+      const ch = client.channel('call-' + room, { config: { presence: { key: 'door-' + myId } } });
+      let done = false;
+      const check = () => {
+        if (done) return;
+        if (quizIsOn(ch.presenceState())) {
+          done = true;
+          soon.remove();
+          client.removeChannel(ch);
+          toast("The quiz is on! Come in.");
+          resolve();
+          return;
+        }
+        soon.classList.remove('checking');
+        note.textContent = 'This page opens by itself when the quiz starts.';
+      };
+      ch.on('presence', { event: 'sync' }, check)
+        .subscribe(status => { if (status === 'SUBSCRIBED') setTimeout(check, 2500); });
+    });
+  }
+
   async function setupPrejoin() {
+    await waitForQuiz();
     if (tvMode) {
       el.nameInput.value = new URLSearchParams(location.search).get('name') || 'TV';
       el.preStatus.textContent = 'Connecting to the room…';

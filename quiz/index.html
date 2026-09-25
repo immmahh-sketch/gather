@@ -25,7 +25,14 @@
   // Join-only: this page always joins the quiz room. There is no room in the
   // address to change, and sharing and files are switched off. It also has its
   // own password (see gate.js).
-  window.GATHER_JOIN = { room: 'lets-quiz', title: "Let's Quiz" };
+  // Until the quiz screen is shared into the room, players see the notice
+  // below instead (doors: false turns that off).
+  window.GATHER_JOIN = {
+    room: 'lets-quiz',
+    title: "Let's Quiz",
+    soonTitle: "Let's Quiz coming soon!",
+    soonText: 'Come back on Friday 2nd October at 7pm!'
+  };
 </script>
 <script src="../assets/config.js"></script>
 <script src="../assets/gate.js"></script>
