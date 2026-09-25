@@ -86,3 +86,16 @@ The site is private. Every page asks for the password once per device (`assets/g
 Signing key: the PKCS12 keystore and its password live in the repo's Actions secrets, with a private copy at `C:\Users\GM\Documents\gather-tv-signing.p12` and `gather-tv-signing-PASSWORD.txt`. Updates must be signed with the same key or the Fire Stick refuses to install over the old version.
 
 To sideload: on the Fire Stick enable *Apps from unknown sources* (Settings → My Fire TV → Developer options), install the *Downloader* app from the Amazon store, and enter the short link. Older sticks on Fire OS 5 have a dated browser engine and may not play the video; Fire OS 6 and 7 sticks (4K, Lite, 3rd gen) are fine.
+
+## Big files (Cloudflare R2)
+
+Files up to 20 GB go to the Cloudflare R2 bucket `gather-files` (Western Europe, private). The browser uploads straight to R2 in 16 MB+ parts, four at a time, each part retried with backoff, using links pre-signed by `gather-rtc`; the function then completes the multipart upload (a signed ticket stops anyone completing or cancelling uploads it did not start). Downloads are pre-signed links that save under the original name. Call files live under `rooms/<room>/`, direct files under `inbox/<person>/`.
+
+Set up on 25 Sept 2026:
+- R2 subscription on the Cloudflare account ($0/month; free tier is 10 GB-month storage, 1M Class A and 10M Class B operations; downloads are free).
+- Bucket CORS: GET/PUT/HEAD from gathercall.uk, www.gathercall.uk, the github.io address and localhost:8765, exposing `ETag`.
+- Lifecycle rules: `rooms/` deleted after 1 day, `inbox/` after 7 days, unfinished uploads aborted after 7 days.
+- Account API token "gather-rtc (Gather file uploads)": Object Read & Write on `gather-files` only.
+- Supabase secrets on `gather-rtc`: `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
+
+Without the R2 secrets the function falls back to Supabase Storage with a 50 MB limit. To rotate the key: Cloudflare → R2 → Manage API tokens → the token's menu → Roll, then set the two key secrets again.
