@@ -387,3 +387,6 @@ body.joinonly .drophint, body.joinonly #prejoin .foot a, body.joinonly #left .ro
   .linkbtn span { display: none; }
   .viewtoggle button { width: 30px; }
 }
+/* The big picture shows the whole camera, not a crop: on a portrait phone a
+   landscape camera would otherwise lose both sides. */
+#stage .tile[data-kind="cam"] video { object-fit: contain; }
