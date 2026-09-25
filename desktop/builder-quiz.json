@@ -1,0 +1,57 @@
+{
+  "appId": "uk.gathercall.quiz",
+  "productName": "Let's Quiz",
+  "extraMetadata": {
+    "productName": "Let's Quiz",
+    "gatherApp": {
+      "quiz": true
+    }
+  },
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "main.js",
+    "picker.html",
+    "picker.js",
+    "picker-preload.js",
+    "icon.ico",
+    "quiz-icon.ico"
+  ],
+  "win": {
+    "target": [
+      "nsis"
+    ],
+    "icon": "quiz-icon.ico",
+    "artifactName": "Lets-Quiz-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Let's Quiz"
+  },
+  "mac": {
+    "target": [
+      {
+        "target": "dmg",
+        "arch": [
+          "universal"
+        ]
+      }
+    ],
+    "icon": "quiz-icon.png",
+    "category": "public.app-category.entertainment",
+    "identity": "-",
+    "hardenedRuntime": false,
+    "artifactName": "Lets-Quiz-Mac.${ext}",
+    "extendInfo": {
+      "NSCameraUsageDescription": "So the other players can see you on quiz night.",
+      "NSMicrophoneUsageDescription": "So the other players can hear you on quiz night."
+    }
+  },
+  "dmg": {
+    "title": "Let's Quiz"
+  }
+}

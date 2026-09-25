@@ -1,0 +1,95 @@
+name: Build desktop apps (Gather for Windows, Let's Quiz for Windows and Mac)
+
+on:
+  push:
+    branches: [main]
+    paths: ['desktop/**', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# None of these are code-signed (that needs paid Microsoft and Apple
+# certificates), so Windows and macOS warn the first time they open.
+# quizapp/index.html tells people how to get past that.
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: gather
+            os: windows-latest
+            args: --win nsis
+            out: Gather-Setup.exe
+          - app: quiz
+            os: windows-latest
+            args: --win nsis
+            out: Lets-Quiz-Setup.exe
+          - app: quiz
+            os: macos-latest
+            args: --mac
+            out: Lets-Quiz-Mac.dmg
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Electron and the packager
+        run: npm install --no-audit --no-fund
+
+      - name: Set the version from the run number
+        run: npm version 1.0.${{ github.run_number }} --no-git-tag-version --allow-same-version
+
+      - name: Build
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --config builder-${{ matrix.app }}.json ${{ matrix.args }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.out }}
+          path: desktop/dist/${{ matrix.out }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Publish Gather for Windows (win-latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: win-latest
+          name: Gather for Windows
+          body: |
+            Gather as a Windows app: its own window onto https://gathercall.uk, with a screen picker that can share the computer's sound too (music and videos for quiz night), and a menu item for Quiz night (host).
+
+            Download and run: https://github.com/immmahh-sketch/gather/releases/download/win-latest/Gather-Setup.exe
+
+            It installs for the current user (no admin needed) and adds Start menu and desktop shortcuts. It isn't code-signed, so the first time Windows says it protected your PC: click More info, then Run anyway.
+          files: out/Gather-Setup.exe
+
+      - name: Publish Let's Quiz for Windows and Mac (quiz-app-latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: quiz-app-latest
+          name: Let's Quiz for Windows and Mac
+          body: |
+            The quiz night app: opens straight onto https://gathercall.uk/quiz. Download page with instructions: https://gathercall.uk/quizapp
+
+            Windows: https://github.com/immmahh-sketch/gather/releases/download/quiz-app-latest/Lets-Quiz-Setup.exe
+            Mac (Apple silicon and Intel): https://github.com/immmahh-sketch/gather/releases/download/quiz-app-latest/Lets-Quiz-Mac.dmg
+          files: |
+            out/Lets-Quiz-Setup.exe
+            out/Lets-Quiz-Mac.dmg
