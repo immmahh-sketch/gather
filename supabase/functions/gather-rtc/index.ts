@@ -10,6 +10,12 @@
 //   POST /files/upload                          signed upload URL for a file in a room
 //   GET  /files?room=                           a room's files from the last 24 hours
 //   GET  /files/link?room=&path=                short-lived download link
+//   GET  /people                                everyone who has picked a name
+//   POST /people                                pick a name (claims it, or finds it)
+//   DELETE /people                              remove a name
+//   POST /inbox/upload                          signed upload URL for a file to a person
+//   GET  /inbox?me=                             files sent to me in the last 7 days
+//   GET  /inbox/link?me=&path=                  short-lived download link
 //
 // Files live in the private Storage bucket gather-files (created on first use),
 // as <room>/<epochMs>.<rand>.<senderHex>.x<nameHex>, and are deleted after 24 hours.
@@ -41,7 +47,7 @@ function cors(origin: string | null) {
   return {
     "access-control-allow-origin": allow,
     "access-control-allow-headers": "authorization, apikey, content-type, x-gather-key",
-    "access-control-allow-methods": "GET, POST, PUT, OPTIONS",
+    "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
     "vary": "origin",
     "cache-control": "no-store",
   };
@@ -153,6 +159,8 @@ async function sweepAll() {
   lastSweep = Date.now();
   const rooms = (await listPrefix("")).filter((o) => o && !o.id && ROOM_RE.test(o.name)).map((o) => o.name);
   for (const room of rooms) await freshFiles(room).catch(() => {});
+  const inboxes = (await listPrefix("_inbox/").catch(() => [])).filter((o) => o && !o.id && /^[0-9a-f]+$/.test(o.name)).map((o) => o.name);
+  for (const key of inboxes) await freshInbox(key).catch(() => {});
 }
 
 async function handleFiles(path: string, req: Request, url: URL, headers: Record<string, string>): Promise<Response | null> {
@@ -201,6 +209,130 @@ async function handleFiles(path: string, req: Request, url: URL, headers: Record
   return null;
 }
 
+// ---- People and direct files (sent to a person, not a room) ----
+// A person is just a name, stored as an empty object _people/<key>.x<displayHex>,
+// where <key> is the hex of the lower-cased name, so "Alex" and "alex" are one
+// person and listing the folder gives everyone without reading any files.
+// Direct files live under _inbox/<key>/ and are kept for 7 days.
+const PEOPLE = "_people";
+const INBOX = "_inbox";
+const INBOX_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+const PERSON_RE = /^([0-9a-f]{2,240})\.x((?:[0-9a-f]{2}){1,240})$/;
+
+function cleanPersonName(n: string) {
+  const s = String(n || "").normalize("NFC").replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim();
+  return [...s].slice(0, 30).join("");
+}
+const personKey = (name: string) => toHex(cleanPersonName(name).toLowerCase());
+
+async function listPeople() {
+  const seen = new Map<string, string>();
+  for (const o of await listPrefix(PEOPLE + "/")) {
+    if (!o || !o.id) continue;
+    const m = PERSON_RE.exec(o.name);
+    if (m && !seen.has(m[1])) seen.set(m[1], fromHex(m[2]));
+  }
+  return seen; // key -> display name
+}
+
+async function putEmpty(key: string) {
+  const r = await storage(`/object/${BUCKET}/${enc(key)}`, { method: "POST", body: "1", headers: { "content-type": "text/plain", "x-upsert": "true" } });
+  if (!r.ok) throw new Error("save: " + r.status + " " + (await r.text()).slice(0, 200));
+}
+
+// Files in one person's inbox from the last week, newest first; older ones are deleted.
+async function freshInbox(key: string): Promise<FileRow[]> {
+  const now = Date.now();
+  const keep: FileRow[] = [];
+  const old: string[] = [];
+  for (const o of await listPrefix(`${INBOX}/${key}/`)) {
+    if (!o || !o.id) continue;
+    const m = KEY_RE.exec(o.name);
+    if (!m) continue;
+    const at = Number(m[1]);
+    if (now - at > INBOX_KEEP_MS) { old.push(`${INBOX}/${key}/${o.name}`); continue; }
+    keep.push({
+      path: `${INBOX}/${key}/${o.name}`, name: decodeName(m[4]), from: fromHex(m[3]) || "Someone", at,
+      size: (o.metadata && o.metadata.size) || 0, type: (o.metadata && o.metadata.mimetype) || "",
+    });
+  }
+  await removeKeys(old);
+  return keep;
+}
+
+async function handlePeople(path: string, req: Request, url: URL, headers: Record<string, string>): Promise<Response | null> {
+  if (!SUPA_URL || !SERVICE_KEY) return json({ errorCode: "not_configured", errorDescription: "Storage is not available" }, 503, headers);
+  await ensureBucket();
+
+  if (path === "/people" && req.method === "GET") {
+    const people = [...(await listPeople()).values()].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+    return json({ people }, 200, headers);
+  }
+
+  // Claim a name. If it is already taken the existing spelling comes back with
+  // created: false, and the page asks whether that is the same person.
+  if (path === "/people" && req.method === "POST") {
+    const b = await req.json().catch(() => ({} as Record<string, unknown>));
+    const name = cleanPersonName(String(b.name || ""));
+    if (!name) return json({ errorCode: "bad_name", errorDescription: "Please type your name" }, 400, headers);
+    const key = personKey(name);
+    const existing = (await listPeople()).get(key);
+    if (existing) return json({ name: existing, created: false }, 200, headers);
+    await putEmpty(`${PEOPLE}/${key}.x${toHex(name)}`);
+    return json({ name, created: true }, 200, headers);
+  }
+
+  // Remove a name (a typo, or a test). Files already sent to it expire as normal.
+  if (path === "/people" && req.method === "DELETE") {
+    const b = await req.json().catch(() => ({} as Record<string, unknown>));
+    const key = personKey(String(b.name || ""));
+    const rows = (await listPrefix(PEOPLE + "/")).filter((o) => o && o.id && o.name.startsWith(key + ".x"));
+    await removeKeys(rows.map((o) => `${PEOPLE}/${o.name}`));
+    return json({ removed: rows.length }, 200, headers);
+  }
+
+  if (path === "/inbox/upload" && req.method === "POST") {
+    const b = await req.json().catch(() => ({} as Record<string, unknown>));
+    const size = Number(b.size || 0);
+    const to = cleanPersonName(String(b.to || ""));
+    const from = cleanPersonName(String(b.from || "")) || "Someone";
+    if (!(size > 0)) return json({ errorCode: "empty", errorDescription: "That file is empty" }, 400, headers);
+    if (size > MAX_BYTES) return json({ errorCode: "too_large", errorDescription: "Files can be up to 50 MB" }, 413, headers);
+    const toKey = personKey(to);
+    if (!to || !(await listPeople()).has(toKey)) return json({ errorCode: "no_person", errorDescription: "Nobody called " + to + " is on Gather" }, 404, headers);
+    const rand = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
+    const name = trimName(String(b.name || "file"));
+    const key = `${INBOX}/${toKey}/${Date.now()}.${rand}.${toHex(from)}.${encodeName(name)}`;
+    const r = await storage(`/object/upload/sign/${BUCKET}/${enc(key)}`, { method: "POST", body: "{}" });
+    if (!r.ok) return json({ errorCode: "sign_failed", errorDescription: (await r.text()).slice(0, 200) }, 502, headers);
+    const d = await r.json();
+    const token = new URL(`${SUPA_URL}/storage/v1${d.url}`).searchParams.get("token") || d.token || "";
+    sweepAll().catch(() => {});
+    return json({ path: key, name, to: (await listPeople()).get(toKey), uploadUrl: `${SUPA_URL}/storage/v1/object/upload/sign/${BUCKET}/${enc(key)}?token=${encodeURIComponent(token)}` }, 200, headers);
+  }
+
+  if (path === "/inbox" && req.method === "GET") {
+    const me = cleanPersonName(url.searchParams.get("me") || "");
+    if (!me) return json({ errorCode: "bad_name", errorDescription: "Who are you?" }, 400, headers);
+    return json({ files: await freshInbox(personKey(me)) }, 200, headers);
+  }
+
+  if (path === "/inbox/link" && req.method === "GET") {
+    const me = cleanPersonName(url.searchParams.get("me") || "");
+    const key = url.searchParams.get("path") || "";
+    const prefix = `${INBOX}/${personKey(me)}/`;
+    if (!me || !key.startsWith(prefix) || key.includes("..")) return json({ errorCode: "bad_path", errorDescription: "Bad file" }, 400, headers);
+    const m = KEY_RE.exec(key.slice(prefix.length));
+    if (!m || Date.now() - Number(m[1]) > INBOX_KEEP_MS) return json({ errorCode: "gone", errorDescription: "That file has expired" }, 410, headers);
+    const r = await storage(`/object/sign/${BUCKET}/${enc(key)}`, { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) });
+    if (!r.ok) return json({ errorCode: "gone", errorDescription: "That file is no longer available" }, 410, headers);
+    const d = await r.json();
+    const token = new URL(`${SUPA_URL}/storage/v1${d.signedURL || d.signedUrl}`).searchParams.get("token") || "";
+    return json({ url: `${SUPA_URL}/storage/v1/object/sign/${BUCKET}/${enc(key)}?token=${encodeURIComponent(token)}&download=${encodeURIComponent(decodeName(m[4]))}` }, 200, headers);
+  }
+  return null;
+}
+
 // ---- SFU session API, forwarded as-is ----
 const SESSION_ROUTE = /^\/sessions\/([A-Za-z0-9_-]{1,128})\/(tracks\/new|tracks\/update|tracks\/close|renegotiate)$/;
 const METHODS: Record<string, string> = { "tracks/new": "POST", "tracks/update": "PUT", "tracks/close": "PUT", "renegotiate": "PUT" };
@@ -232,6 +364,11 @@ Deno.serve(async (req) => {
   try {
     if (path === "/ice" && req.method === "GET") {
       return json({ iceServers: await iceServers() }, 200, headers);
+    }
+    if (path === "/people" || path === "/inbox" || path.startsWith("/inbox/")) {
+      const res = await handlePeople(path, req, url, headers);
+      if (res) return res;
+      return json({ errorCode: "not_found", errorDescription: "No such route" }, 404, headers);
     }
     if (path === "/files" || path.startsWith("/files/")) {
       const res = await handleFiles(path, req, url, headers);

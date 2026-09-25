@@ -45,7 +45,12 @@
 <header class="top">
   <div class="wrap">
     <a class="brand" href="./"><svg class="mark"><use href="#mark"/></svg><span>Gather</span></a>
-    <a class="top-link" href="#how">How it works</a>
+    <div class="top-right">
+      <button class="me-chip hidden" id="meChip" type="button" title="Change your name">
+        <span class="me-dot" id="meInitial">?</span><span id="meName"></span>
+      </button>
+      <a class="top-link" href="#how">How it works</a>
+    </div>
   </div>
 </header>
 
@@ -89,6 +94,36 @@
     </aside>
   </section>
 
+  <section class="direct wrap hidden" id="directFiles">
+    <div class="direct-grid">
+      <div class="dcard">
+        <span class="eyebrow">Send a file</span>
+        <h2 class="dtitle">Send something to someone</h2>
+        <label class="dlabel" for="dmTo">To</label>
+        <select class="field dselect" id="dmTo"></select>
+        <p class="hint hidden" id="dmNobody">Nobody else has picked a name yet. Once family open Gather and type their name, they appear here.</p>
+        <span class="dlabel">Files</span>
+        <label class="ddrop" id="dmDrop">
+          <input type="file" id="dmFile" multiple hidden>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          <span id="dmPicked">Choose files, or drop them here</span>
+        </label>
+        <div class="dprogress hidden" id="dmProgress"><i></i></div>
+        <button class="btn primary big dsend" id="dmSend" type="button" disabled>Send</button>
+        <p class="dstatus" id="dmStatus"></p>
+        <p class="hint">Up to 50 MB each. Kept for 7 days.</p>
+      </div>
+      <div class="dcard">
+        <div class="dhead">
+          <span class="eyebrow">Files for you <span class="dcount hidden" id="inboxCount"></span></span>
+          <button class="textbtn" id="inboxRefresh" type="button">Refresh</button>
+        </div>
+        <ul class="dlist" id="inboxList"></ul>
+        <p class="dempty" id="inboxEmpty">Nothing yet. Files people send you appear here, with a notice if Gather is open.</p>
+      </div>
+    </div>
+  </section>
+
   <section class="steps wrap" id="how">
     <h2 class="section-title">How it works</h2>
     <ol class="stepgrid">
@@ -129,6 +164,23 @@
     <p>Gather · made for family calls.</p>
   </footer>
 </main>
+
+<div class="namegate hidden" id="nameGate">
+  <form class="namecard" id="nameForm" autocomplete="off">
+    <svg class="mark"><use href="#mark"/></svg>
+    <h2 id="nameTitle">What's your name?</h2>
+    <p id="nameSub">So family can send you files, and so you're named in calls.</p>
+    <input class="field" id="nameField" type="text" maxlength="30" autocomplete="name" placeholder="Your name" enterkeyhint="go">
+    <div class="name-err" id="nameErr"></div>
+    <div id="nameAsk"><button class="btn primary big" id="nameGo" type="submit">Continue</button></div>
+    <div class="hidden" id="nameConfirm">
+      <button class="btn primary big" id="nameYes" type="button">Yes, that's me</button>
+      <button class="btn" id="nameNo" type="button">Use a different name</button>
+    </div>
+    <button class="textbtn hidden" id="nameCancel" type="button">Keep my current name</button>
+  </form>
+</div>
+<div id="toast" class="hometoast"></div>
 
 <script>
 (() => {
@@ -178,5 +230,7 @@
   });
 })();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/people.js"></script>
 </body>
 </html>
