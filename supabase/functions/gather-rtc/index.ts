@@ -163,10 +163,12 @@ let lastSweep = 0;
 async function sweepAll() {
   if (Date.now() - lastSweep < 60 * 60 * 1000) return;
   lastSweep = Date.now();
+  // Capped so one sweep stays light; the rest are picked up on later sweeps or
+  // whenever someone opens that room or inbox.
   const rooms = (await listPrefix("")).filter((o) => o && !o.id && ROOM_RE.test(o.name)).map((o) => o.name);
-  for (const room of rooms) await freshFiles(room).catch(() => {});
+  for (const room of rooms.slice(0, 25)) await freshFiles(room).catch(() => {});
   const inboxes = (await listPrefix("_inbox/").catch(() => [])).filter((o) => o && !o.id && /^[0-9a-f]+$/.test(o.name)).map((o) => o.name);
-  for (const key of inboxes) await freshInbox(key).catch(() => {});
+  for (const key of inboxes.slice(0, 25)) await freshInbox(key).catch(() => {});
 }
 
 async function handleFiles(path: string, req: Request, url: URL, headers: Record<string, string>): Promise<Response | null> {
