@@ -11,7 +11,7 @@
   const cfg = window.GATHER_CONFIG || {};
   const $ = s => document.querySelector(s);
   const RTC = cfg.RTC_ENDPOINT || '';
-  const MAX_FILE = 50 * 1024 * 1024;
+  let maxFile = 50 * 1024 * 1024; // raised to 20 GB when big-file storage (R2) is set up
 
   const store = {
     get: k => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -19,9 +19,9 @@
   };
 
   // ---------- server ----------
-  async function api(path, method, body) {
+  async function api(path, method, body, ms) {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 15000);
+    const timer = setTimeout(() => ctl.abort(), ms || 15000);
     let r;
     try {
       r = await fetch(RTC + path, {
@@ -56,7 +56,7 @@
     list: $('#inboxList'), empty: $('#inboxEmpty'), count: $('#inboxCount'), refresh: $('#inboxRefresh'),
     gate: $('#nameGate'), form: $('#nameForm'), title: $('#nameTitle'), sub: $('#nameSub'), field: $('#nameField'),
     err: $('#nameErr'), ask: $('#nameAsk'), confirm: $('#nameConfirm'), yes: $('#nameYes'), no: $('#nameNo'),
-    cancel: $('#nameCancel'), toast: $('#toast')
+    cancel: $('#nameCancel'), toast: $('#toast'), max: $('#dmMax')
   };
   let toastTimer = null;
   function toast(msg) {
@@ -205,9 +205,9 @@
   let chosen = [], sending = false;
   function setChosen(files) {
     chosen = files.filter(f => f && f.size >= 0);
-    const big = chosen.filter(f => f.size > MAX_FILE);
-    if (big.length) toast(big.map(f => f.name).join(', ') + (big.length > 1 ? ' are' : ' is') + ' over 50 MB');
-    chosen = chosen.filter(f => f.size > 0 && f.size <= MAX_FILE);
+    const big = chosen.filter(f => f.size > maxFile);
+    if (big.length) toast(big.map(f => f.name).join(', ') + (big.length > 1 ? ' are' : ' is') + ' over ' + window.GatherUpload.sizeLabel(maxFile));
+    chosen = chosen.filter(f => f.size > 0 && f.size <= maxFile);
     const total = chosen.reduce((n, f) => n + f.size, 0);
     el.picked.textContent = !chosen.length ? 'Choose files, or drop them here'
       : chosen.length === 1 ? chosen[0].name + ' · ' + fmtSize(total)
@@ -226,22 +226,6 @@
   for (const ev of ['dragleave', 'drop']) el.drop.addEventListener(ev, () => el.drop.classList.remove('over'));
   el.drop.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) setChosen([...e.dataTransfer.files]); });
 
-  function upload(url, file, onProgress) {
-    return new Promise((resolve, reject) => {
-      const x = new XMLHttpRequest();
-      x.open('PUT', url);
-      x.setRequestHeader('apikey', cfg.SUPABASE_KEY);
-      x.setRequestHeader('x-upsert', 'false');
-      x.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
-      x.onload = () => x.status < 300 ? resolve() : reject(new Error('Upload failed (' + x.status + ')'));
-      x.onerror = () => reject(new Error('Connection lost while sending'));
-      const form = new FormData();
-      form.append('cacheControl', '3600');
-      form.append('', file, file.name);
-      x.send(form);
-    });
-  }
-
   el.send.addEventListener('click', async () => {
     const to = el.to.value;
     if (!to || !chosen.length || sending) return;
@@ -258,7 +242,7 @@
       for (const file of files) {
         el.status.textContent = 'Sending ' + file.name + '…';
         const up = await api('/inbox/upload', 'POST', { to, from: me, name: file.name, size: file.size, type: file.type });
-        await upload(up.uploadUrl, file, p => { bar.style.width = Math.round(((doneBytes + p * file.size) / totalBytes) * 100) + '%'; });
+        await window.GatherUpload.send(up, file, p => { bar.style.width = Math.round(((doneBytes + p * file.size) / totalBytes) * 100) + '%'; }, api);
         doneBytes += file.size;
         sent++;
         notify(to, { path: up.path, name: up.name, size: file.size, type: file.type || '', from: me, at: Date.now() });
@@ -397,6 +381,7 @@
 
   // ---------- start ----------
   (window.GATHER_READY || Promise.resolve()).then(() => {
+    window.GatherUpload.maxBytes(api).then(n => { maxFile = n; el.max.textContent = window.GatherUpload.sizeLabel(n); });
     renderMe();
     if (!me) { showNameGate(false); return; }
     loadPeople(true);

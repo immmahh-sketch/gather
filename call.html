@@ -169,7 +169,7 @@
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
         Send a file
       </button>
-      <small>Everyone in this room can download it for 24 hours. Up to 50 MB each.</small>
+      <small>Everyone in this room can download it for 24 hours. Up to <span id="filesMax">50 MB</span> each.</small>
     </div>
     <ul class="fp-list" id="filesList"></ul>
     <p class="fp-empty" id="filesEmpty">Nothing shared yet. Files sent in this room appear here.</p>
@@ -196,6 +196,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="assets/config.js"></script>
+<script src="assets/upload.js"></script>
 <script src="assets/call.js"></script>
 </body>
 </html>

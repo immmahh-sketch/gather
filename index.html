@@ -111,7 +111,7 @@
         <div class="dprogress hidden" id="dmProgress"><i></i></div>
         <button class="btn primary big dsend" id="dmSend" type="button" disabled>Send</button>
         <p class="dstatus" id="dmStatus"></p>
-        <p class="hint">Up to 50 MB each. Kept for 7 days.</p>
+        <p class="hint">Up to <span id="dmMax">50 MB</span> each. Kept for 7 days.</p>
       </div>
       <div class="dcard">
         <div class="dhead">
@@ -231,6 +231,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/upload.js"></script>
 <script src="assets/people.js"></script>
 </body>
 </html>

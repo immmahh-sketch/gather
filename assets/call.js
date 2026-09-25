@@ -87,10 +87,10 @@
   // call (seen when someone's connection had died: Cloudflare can sit on a
   // renegotiation for a track that no longer sends).
   const API_TIMEOUT = 12000;
-  async function api(path, method, body) {
+  async function api(path, method, body, ms) {
     let r;
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), API_TIMEOUT);
+    const timer = setTimeout(() => ctl.abort(), ms || API_TIMEOUT);
     try { r = await fetch(RTC + path, { method, headers: authHeaders(), body: body ? JSON.stringify(body) : undefined, signal: ctl.signal }); }
     catch (e) { throw new Error(e && e.name === 'AbortError' ? 'timed out' : 'unreachable'); }
     finally { clearTimeout(timer); }
@@ -944,7 +944,7 @@
   // only hands out a one-off upload link), then a broadcast tells the room.
   // Download links are fetched ahead of time so a tap opens them directly: on
   // iPhones a link opened after a wait counts as a pop-up and gets blocked.
-  const MAX_FILE = 50 * 1024 * 1024;
+  let maxFile = 50 * 1024 * 1024; // raised to 20 GB when big-file storage (R2) is set up
   const shared = { list: [], byPath: new Map(), unread: 0, open: false, loaded: false };
   const fl = {
     btn: $('#filesBtn'), badge: $('#filesBadge'), panel: $('#filesPanel'), list: $('#filesList'),
@@ -1060,6 +1060,7 @@
   async function loadFiles() {
     if (tvMode || shared.loaded) return;
     shared.loaded = true;
+    if (window.GatherUpload) window.GatherUpload.maxBytes(api).then(n => { maxFile = n; const m = $('#filesMax'); if (m) m.textContent = window.GatherUpload.sizeLabel(n); });
     try {
       const d = await api('/files?room=' + encodeURIComponent(room), 'GET');
       for (const f of d.files || []) addShared(f, false);
@@ -1087,34 +1088,18 @@
     } finally { linking = false; }
   }
 
-  function uploadWithProgress(url, file, onProgress) {
-    return new Promise((resolve, reject) => {
-      const x = new XMLHttpRequest();
-      x.open('PUT', url);
-      x.setRequestHeader('apikey', cfg.SUPABASE_KEY);
-      x.setRequestHeader('x-upsert', 'false');
-      x.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
-      x.onload = () => x.status < 300 ? resolve() : reject(new Error('upload failed (' + x.status + ')'));
-      x.onerror = () => reject(new Error('connection lost'));
-      const form = new FormData();
-      form.append('cacheControl', '3600');
-      form.append('', file, file.name);
-      x.send(form);
-    });
-  }
-
   async function sendFiles(list) {
     if (!list.length) return;
     if (!shared.open) setFilesOpen(true);
     for (const file of list) {
       if (!file.size) { toast(file.name + ' is empty'); continue; }
-      if (file.size > MAX_FILE) { toast(file.name + ' is over 50 MB'); continue; }
+      if (file.size > maxFile) { toast(file.name + ' is over ' + window.GatherUpload.sizeLabel(maxFile)); continue; }
       const temp = { name: file.name, size: file.size, type: file.type, from: local.name, mine: true, at: Date.now(), uploading: true, progress: 0 };
       shared.list.unshift(temp);
       renderFiles();
       try {
         const up = await api('/files/upload', 'POST', { room, name: file.name, size: file.size, type: file.type, from: local.name });
-        await uploadWithProgress(up.uploadUrl, file, p => { temp.progress = p; if (temp.barEl) temp.barEl.style.width = Math.round(p * 100) + '%'; });
+        await window.GatherUpload.send(up, file, p => { temp.progress = p; if (temp.barEl) temp.barEl.style.width = Math.round(p * 100) + '%'; }, api);
         shared.list = shared.list.filter(x => x !== temp);
         const done = { path: up.path, name: up.name, size: file.size, type: file.type || '', from: local.name, at: Date.now() };
         addShared(done, false);

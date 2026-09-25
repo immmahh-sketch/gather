@@ -16,6 +16,12 @@
 //   POST /inbox/upload                          signed upload URL for a file to a person
 //   GET  /inbox?me=                             files sent to me in the last 7 days
 //   GET  /inbox/link?me=&path=                  short-lived download link
+//   GET  /upload/limits                         biggest file allowed right now
+//   POST /upload/complete, /upload/abort        finish or cancel a multipart upload to R2
+//
+// Big files (up to 20 GB) go to Cloudflare R2 once R2_ACCOUNT_ID, R2_ACCESS_KEY_ID
+// and R2_SECRET_ACCESS_KEY are set (and optionally R2_BUCKET, default gather-files).
+// Without them, files use Supabase Storage and are limited to 50 MB.
 //
 // Files live in the private Storage bucket gather-files (created on first use),
 // as <room>/<epochMs>.<rand>.<senderHex>.x<nameHex>, and are deleted after 24 hours.
@@ -173,10 +179,13 @@ async function handleFiles(path: string, req: Request, url: URL, headers: Record
     const size = Number(b.size || 0);
     if (!ROOM_RE.test(room)) return json({ errorCode: "bad_room", errorDescription: "Bad room" }, 400, headers);
     if (!(size > 0)) return json({ errorCode: "empty", errorDescription: "That file is empty" }, 400, headers);
-    if (size > MAX_BYTES) return json({ errorCode: "too_large", errorDescription: "Files can be up to 50 MB" }, 413, headers);
+    const limit = R2_ON ? R2_MAX_BYTES : MAX_BYTES;
+    if (size > limit) return json({ errorCode: "too_large", errorDescription: "Files can be up to " + (R2_ON ? "20 GB" : "50 MB") }, 413, headers);
     const rand = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
     const name = trimName(String(b.name || "file"));
-    const key = `${room}/${Date.now()}.${rand}.${toHex([...String(b.from || "")].slice(0, 30).join("")).slice(0, 240)}.${encodeName(name)}`;
+    const leaf = `${Date.now()}.${rand}.${toHex([...String(b.from || "")].slice(0, 30).join("")).slice(0, 240)}.${encodeName(name)}`;
+    if (R2_ON) return json({ ...(await r2Start(`rooms/${room}/${leaf}`, size, String(b.type || ""))), path: `rooms/${room}/${leaf}`, name }, 200, headers);
+    const key = `${room}/${leaf}`;
     const r = await storage(`/object/upload/sign/${BUCKET}/${enc(key)}`, { method: "POST", body: "{}" });
     if (!r.ok) return json({ errorCode: "sign_failed", errorDescription: (await r.text()).slice(0, 200) }, 502, headers);
     const d = await r.json();
@@ -189,17 +198,19 @@ async function handleFiles(path: string, req: Request, url: URL, headers: Record
   if (path === "/files" && req.method === "GET") {
     const room = url.searchParams.get("room") || "";
     if (!ROOM_RE.test(room)) return json({ errorCode: "bad_room", errorDescription: "Bad room" }, 400, headers);
-    return json({ files: await freshFiles(room) }, 200, headers);
+    return json({ files: R2_ON ? await r2List(`rooms/${room}/`, KEEP_MS) : await freshFiles(room) }, 200, headers);
   }
 
   if (path === "/files/link" && req.method === "GET") {
     const room = url.searchParams.get("room") || "";
     const key = url.searchParams.get("path") || "";
-    if (!ROOM_RE.test(room) || !key.startsWith(room + "/") || key.includes("..")) {
+    const inR2 = key.startsWith(`rooms/${room}/`);
+    if (!ROOM_RE.test(room) || !(inR2 || key.startsWith(room + "/")) || key.includes("..")) {
       return json({ errorCode: "bad_path", errorDescription: "Bad file" }, 400, headers);
     }
-    const m = KEY_RE.exec(key.slice(room.length + 1));
+    const m = KEY_RE.exec(key.slice(key.lastIndexOf("/") + 1));
     if (!m || Date.now() - Number(m[1]) > KEEP_MS) return json({ errorCode: "gone", errorDescription: "That file has expired" }, 410, headers);
+    if (inR2) return json({ url: await r2Link(key, decodeName(m[4])) }, 200, headers);
     const r = await storage(`/object/sign/${BUCKET}/${enc(key)}`, { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) });
     if (!r.ok) return json({ errorCode: "gone", errorDescription: "That file is no longer available" }, 410, headers);
     const d = await r.json();
@@ -297,12 +308,17 @@ async function handlePeople(path: string, req: Request, url: URL, headers: Recor
     const to = cleanPersonName(String(b.to || ""));
     const from = cleanPersonName(String(b.from || "")) || "Someone";
     if (!(size > 0)) return json({ errorCode: "empty", errorDescription: "That file is empty" }, 400, headers);
-    if (size > MAX_BYTES) return json({ errorCode: "too_large", errorDescription: "Files can be up to 50 MB" }, 413, headers);
+    if (size > (R2_ON ? R2_MAX_BYTES : MAX_BYTES)) return json({ errorCode: "too_large", errorDescription: "Files can be up to " + (R2_ON ? "20 GB" : "50 MB") }, 413, headers);
     const toKey = personKey(to);
     if (!to || !(await listPeople()).has(toKey)) return json({ errorCode: "no_person", errorDescription: "Nobody called " + to + " is on Gather" }, 404, headers);
     const rand = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
     const name = trimName(String(b.name || "file"));
-    const key = `${INBOX}/${toKey}/${Date.now()}.${rand}.${toHex(from)}.${encodeName(name)}`;
+    const leaf = `${Date.now()}.${rand}.${toHex(from)}.${encodeName(name)}`;
+    if (R2_ON) {
+      const toName = (await listPeople()).get(toKey);
+      return json({ ...(await r2Start(`inbox/${toKey}/${leaf}`, size, String(b.type || ""))), path: `inbox/${toKey}/${leaf}`, name, to: toName }, 200, headers);
+    }
+    const key = `${INBOX}/${toKey}/${leaf}`;
     const r = await storage(`/object/upload/sign/${BUCKET}/${enc(key)}`, { method: "POST", body: "{}" });
     if (!r.ok) return json({ errorCode: "sign_failed", errorDescription: (await r.text()).slice(0, 200) }, 502, headers);
     const d = await r.json();
@@ -314,21 +330,139 @@ async function handlePeople(path: string, req: Request, url: URL, headers: Recor
   if (path === "/inbox" && req.method === "GET") {
     const me = cleanPersonName(url.searchParams.get("me") || "");
     if (!me) return json({ errorCode: "bad_name", errorDescription: "Who are you?" }, 400, headers);
-    return json({ files: await freshInbox(personKey(me)) }, 200, headers);
+    // While moving to R2, also show anything still waiting in the old storage.
+    const key = personKey(me);
+    const files = R2_ON ? [...(await r2List(`inbox/${key}/`, INBOX_KEEP_MS)), ...(await freshInbox(key).catch(() => []))].sort((a, b) => b.at - a.at) : await freshInbox(key);
+    return json({ files }, 200, headers);
   }
 
   if (path === "/inbox/link" && req.method === "GET") {
     const me = cleanPersonName(url.searchParams.get("me") || "");
     const key = url.searchParams.get("path") || "";
-    const prefix = `${INBOX}/${personKey(me)}/`;
+    const r2prefix = `inbox/${personKey(me)}/`;
+    const prefix = key.startsWith(r2prefix) ? r2prefix : `${INBOX}/${personKey(me)}/`;
     if (!me || !key.startsWith(prefix) || key.includes("..")) return json({ errorCode: "bad_path", errorDescription: "Bad file" }, 400, headers);
     const m = KEY_RE.exec(key.slice(prefix.length));
     if (!m || Date.now() - Number(m[1]) > INBOX_KEEP_MS) return json({ errorCode: "gone", errorDescription: "That file has expired" }, 410, headers);
+    if (prefix === r2prefix) return json({ url: await r2Link(key, decodeName(m[4])) }, 200, headers);
     const r = await storage(`/object/sign/${BUCKET}/${enc(key)}`, { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) });
     if (!r.ok) return json({ errorCode: "gone", errorDescription: "That file is no longer available" }, 410, headers);
     const d = await r.json();
     const token = new URL(`${SUPA_URL}/storage/v1${d.signedURL || d.signedUrl}`).searchParams.get("token") || "";
     return json({ url: `${SUPA_URL}/storage/v1/object/sign/${BUCKET}/${enc(key)}?token=${encodeURIComponent(token)}&download=${encodeURIComponent(decodeName(m[4]))}` }, 200, headers);
+  }
+  return null;
+}
+
+// ---- Cloudflare R2 for big files (S3-compatible, used once its keys are set) ----
+// The browser uploads straight to R2 in parts, using links signed here, so files
+// never pass through this function. Keys: rooms/<room>/<file> and inbox/<person>/<file>;
+// R2 lifecycle rules delete rooms/ after a day and inbox/ after a week.
+const R2_ACCOUNT = Deno.env.get("R2_ACCOUNT_ID") || "";
+const R2_KEY_ID = Deno.env.get("R2_ACCESS_KEY_ID") || "";
+const R2_SECRET = Deno.env.get("R2_SECRET_ACCESS_KEY") || "";
+const R2_BUCKET = Deno.env.get("R2_BUCKET") || "gather-files";
+const R2_ON = !!(R2_ACCOUNT && R2_KEY_ID && R2_SECRET);
+const R2_HOST = `${R2_ACCOUNT}.r2.cloudflarestorage.com`;
+const R2_MAX_BYTES = 20 * 1024 * 1024 * 1024; // 20 GB; R2 itself allows terabytes
+const MAX_PARTS = 500;
+const MIN_PART = 16 * 1024 * 1024;
+
+const te = new TextEncoder();
+const bytesHex = (b: ArrayBuffer | Uint8Array) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+async function sha256hex(s: string) { return bytesHex(await crypto.subtle.digest("SHA-256", te.encode(s))); }
+async function hmac(key: Uint8Array, msg: string) {
+  const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", k, te.encode(msg)));
+}
+// RFC 3986 encoding, the way S3 signatures expect it.
+const s3enc = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+
+// A pre-signed URL (AWS Signature V4, query-string form) for one R2 request.
+async function r2url(method: string, key: string, query: Record<string, string>, expires: number) {
+  const amzDate = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const day = amzDate.slice(0, 8);
+  const scope = `${day}/auto/s3/aws4_request`;
+  const q: Record<string, string> = {
+    ...query,
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": `${R2_KEY_ID}/${scope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": String(expires),
+    "X-Amz-SignedHeaders": "host",
+  };
+  const canonicalQuery = Object.keys(q).sort().map((k) => `${s3enc(k)}=${s3enc(q[k])}`).join("&");
+  const path = "/" + R2_BUCKET + (key ? "/" + key.split("/").map(s3enc).join("/") : "");
+  const canonical = [method, path, canonicalQuery, `host:${R2_HOST}\n`, "host", "UNSIGNED-PAYLOAD"].join("\n");
+  const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, await sha256hex(canonical)].join("\n");
+  let k = await hmac(te.encode("AWS4" + R2_SECRET), day);
+  k = await hmac(k, "auto");
+  k = await hmac(k, "s3");
+  k = await hmac(k, "aws4_request");
+  return `https://${R2_HOST}${path}?${canonicalQuery}&X-Amz-Signature=${bytesHex(await hmac(k, toSign))}`;
+}
+const xmlTag = (xml: string, tag: string) => { const m = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(xml); return m ? m[1] : ""; };
+const xmlText = (s: string) => s.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+
+// Proof that an upload id was handed out by us, so only our own uploads can be finished or cancelled.
+async function uploadTicket(key: string, uploadId: string) {
+  return bytesHex(await hmac(te.encode("gather-upload:" + (GATHER_PASSWORD || R2_SECRET)), key + "|" + uploadId));
+}
+
+async function r2Start(key: string, size: number, type: string) {
+  const r = await fetch(await r2url("POST", key, { uploads: "" }, 300), { method: "POST", headers: type ? { "content-type": type } : {} });
+  const body = await r.text();
+  if (!r.ok) throw new Error("R2 would not start the upload: " + r.status + " " + body.slice(0, 200));
+  const uploadId = xmlText(xmlTag(body, "UploadId"));
+  const partSize = Math.max(MIN_PART, Math.ceil(size / MAX_PARTS / (1024 * 1024)) * 1024 * 1024);
+  const count = Math.max(1, Math.ceil(size / partSize));
+  const urls: string[] = [];
+  for (let i = 1; i <= count; i++) urls.push(await r2url("PUT", key, { partNumber: String(i), uploadId }, 12 * 3600));
+  return { mode: "multipart", key, uploadId, partSize, urls, ticket: await uploadTicket(key, uploadId) };
+}
+
+async function r2List(prefix: string, keepMs: number): Promise<FileRow[]> {
+  const r = await fetch(await r2url("GET", "", { "list-type": "2", prefix, "max-keys": "1000" }, 300));
+  const body = await r.text();
+  if (!r.ok) throw new Error("R2 list: " + r.status + " " + body.slice(0, 200));
+  const now = Date.now();
+  const rows: FileRow[] = [];
+  for (const block of body.match(/<Contents>[\s\S]*?<\/Contents>/g) || []) {
+    const key = xmlText(xmlTag(block, "Key"));
+    const m = KEY_RE.exec(key.slice(prefix.length));
+    if (!m || now - Number(m[1]) > keepMs) continue; // R2's lifecycle rule deletes these
+    rows.push({ path: key, name: decodeName(m[4]), from: fromHex(m[3]) || "Someone", at: Number(m[1]), size: Number(xmlTag(block, "Size")) || 0, type: "" });
+  }
+  return rows.sort((a, b) => b.at - a.at);
+}
+
+async function r2Link(key: string, name: string) {
+  return await r2url("GET", key, { "response-content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}` }, 3600);
+}
+
+async function handleUpload(path: string, req: Request, headers: Record<string, string>): Promise<Response | null> {
+  if (path === "/upload/limits" && req.method === "GET") {
+    return json({ maxBytes: R2_ON ? R2_MAX_BYTES : MAX_BYTES, big: R2_ON }, 200, headers);
+  }
+  if (!R2_ON) return json({ errorCode: "not_configured", errorDescription: "Big files are not set up" }, 503, headers);
+  const b = await req.json().catch(() => ({} as Record<string, unknown>));
+  const key = String(b.key || ""), uploadId = String(b.uploadId || "");
+  if (!/^(rooms|inbox)\//.test(key) || !uploadId || String(b.ticket || "") !== await uploadTicket(key, uploadId)) {
+    return json({ errorCode: "bad_upload", errorDescription: "Unknown upload" }, 400, headers);
+  }
+  if (path === "/upload/complete" && req.method === "POST") {
+    const parts = (Array.isArray(b.parts) ? b.parts : []) as { n: number; etag: string }[];
+    if (!parts.length) return json({ errorCode: "bad_upload", errorDescription: "No parts" }, 400, headers);
+    const xml = "<CompleteMultipartUpload>" + parts.slice().sort((x, y) => x.n - y.n)
+      .map((p) => `<Part><PartNumber>${Number(p.n)}</PartNumber><ETag>${String(p.etag).replace(/[<>&]/g, "")}</ETag></Part>`).join("") + "</CompleteMultipartUpload>";
+    const r = await fetch(await r2url("POST", key, { uploadId }, 300), { method: "POST", body: xml, headers: { "content-type": "application/xml" } });
+    const body = await r.text();
+    if (!r.ok || body.includes("<Error>")) return json({ errorCode: "complete_failed", errorDescription: "The file did not finish uploading: " + (xmlTag(body, "Message") || r.status) }, 502, headers);
+    return json({ ok: true, path: key }, 200, headers);
+  }
+  if (path === "/upload/abort" && req.method === "POST") {
+    await fetch(await r2url("DELETE", key, { uploadId }, 300), { method: "DELETE" }).catch(() => {});
+    return json({ ok: true }, 200, headers);
   }
   return null;
 }
@@ -364,6 +498,11 @@ Deno.serve(async (req) => {
   try {
     if (path === "/ice" && req.method === "GET") {
       return json({ iceServers: await iceServers() }, 200, headers);
+    }
+    if (path.startsWith("/upload/")) {
+      const res = await handleUpload(path, req, headers);
+      if (res) return res;
+      return json({ errorCode: "not_found", errorDescription: "No such route" }, 404, headers);
     }
     if (path === "/people" || path === "/inbox" || path.startsWith("/inbox/")) {
       const res = await handlePeople(path, req, url, headers);
