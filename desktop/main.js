@@ -49,29 +49,43 @@ function offlinePage() {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
 }
 
-function createWindow() {
-  win = new BrowserWindow({
-    width: 1280, height: 820, minWidth: 360, minHeight: 520,
-    title: NAME,
-    backgroundColor: HOST ? '#1a0f3d' : '#0f1412',
-    icon: MAC ? undefined : ICON,
-    autoHideMenuBar: true,
-    // The quiz timers and the shared picture must keep going when the window is behind others.
-    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false }
-  });
-  win.loadURL(HOME);
-  win.webContents.setWindowOpenHandler(({ url }) => {
+const WINDOW_OPTIONS = () => ({
+  width: 1280, height: 820, minWidth: 360, minHeight: 520,
+  title: NAME,
+  backgroundColor: HOST ? '#1a0f3d' : '#0f1412',
+  icon: MAC ? undefined : ICON,
+  autoHideMenuBar: true,
+  // The quiz timers and the shared picture must keep going when the window is behind others.
+  webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false }
+});
+
+// Links: the app's own pages stay in the app, everything else opens in the
+// normal browser. In the host app the builder opens the host screen as a new
+// tab, which becomes a second app window (put it on the TV or a second screen).
+function guard(wc, own) {
+  wc.setWindowOpenHandler(({ url }) => {
+    if (HOST && isOwn(url)) return { action: 'allow', overrideBrowserWindowOptions: Object.assign(WINDOW_OPTIONS(), { width: 1400, height: 860 }) };
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  win.webContents.on('will-navigate', (e, url) => {
+  wc.on('did-create-window', child => {
+    child.setMenuBarVisibility(false);
+    guard(child.webContents, child);
+  });
+  wc.on('will-navigate', (e, url) => {
     if (isOwn(url)) return;
     e.preventDefault();
     if (/^https?:/.test(url)) shell.openExternal(url);
   });
-  win.webContents.on('did-fail-load', (e, code, desc, url, isMain) => {
-    if (isMain && code !== -3) win.loadURL(offlinePage()); // -3 is a cancelled load, not a failure
+  wc.on('did-fail-load', (e, code, desc, url, isMain) => {
+    if (isMain && code !== -3 && !own.isDestroyed()) own.loadURL(offlinePage()); // -3 is a cancelled load, not a failure
   });
+}
+
+function createWindow() {
+  win = new BrowserWindow(WINDOW_OPTIONS());
+  win.loadURL(HOME);
+  guard(win.webContents, win);
   win.on('closed', () => { win = null; });
 }
 
