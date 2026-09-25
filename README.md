@@ -27,6 +27,7 @@ Live at https://gathercall.uk (GitHub Pages, custom domain via the `CNAME` file;
 - Who-is-speaking highlight, join/leave notices, call timer, invite button (native share sheet on phones, copies the link elsewhere).
 - **Raise hand** (the hand button, or `H`): a numbered hand appears on your tile for everyone, in the order hands went up, with a count in the top bar and a notice when someone raises one.
 - **Layout switch** in the top bar (or `G`): *everyone* (the grid, or a shared screen with everyone beside it) or *speaker* (the shared screen or whoever is talking, big, with the talker, raised hands and you beside it; everyone else is still heard). The speaker view follows whoever is loudest, waiting 0.7 s before switching and keeping the current speaker at least 2 s. Tap any tile to make it big; switching layout clears that.
+- **Start quiz night** on the home page opens the `lets-quiz` room with everything switched on, for the quizmaster.
 - **Quiz night page** (`quiz/`, https://gathercall.uk/quiz): join-only. Always joins the room `lets-quiz`, which is not in the address, so it can't be changed. No sharing, no files, no way back to the home page; mic, camera, raise hand, tap to focus and the layout switch all work. Starts in speaker view. It borrows the call screen from `call.html` at load time (`window.GATHER_JOIN` switches `call.js` into join-only mode), so the two stay in step. The host joins the same room from the normal site: https://gathercall.uk/?room=lets-quiz. Guests need the quiz password (`GATHER_QUIZ_PASSWORD` on the server, `QUIZ_PASSWORD_HASH` in config.js), which only opens video calls; the site password works there too. The quiz page keeps it under its own storage name (`gather.quizkey`).
 - Keyboard: `M` mute, `V` camera, `H` raise/lower hand, `G` switch layout, `←`/`→` previous/next photo when presenting.
 
@@ -91,6 +92,21 @@ The quiz night page (`quiz/`) has a second password: secret `GATHER_QUIZ_PASSWOR
 Signing key: the PKCS12 keystore and its password live in the repo's Actions secrets, with a private copy at `C:\Users\GM\Documents\gather-tv-signing.p12` and `gather-tv-signing-PASSWORD.txt`. Updates must be signed with the same key or the Fire Stick refuses to install over the old version.
 
 To sideload: on the Fire Stick enable *Apps from unknown sources* (Settings → My Fire TV → Developer options), install the *Downloader* app from the Amazon store, and enter the short link. Older sticks on Fire OS 5 have a dated browser engine and may not play the video; Fire OS 6 and 7 sticks (4K, Lite, 3rd gen) are fine.
+
+### Let's Quiz TV
+
+The same wrapper has a second build (product flavour `quiz`, app id `uk.gathercall.quiztv`, its own banner and icon in `android/app/src/quiz/res`). It opens `quiz/?tv=1`, which joins the quiz room in TV mode and asks for the quiz password once. Both apps can be installed side by side. Published in the same `tv-latest` release:
+
+    https://github.com/immmahh-sketch/gather/releases/download/tv-latest/quiz-tv.apk
+    short link for Downloader: tinyurl.com/letsquiztv
+
+## Windows app
+
+`windows/` is an Electron window onto https://gathercall.uk. It adds a screen picker (Electron has none of its own) with a *Share computer sound* option that sends everything the PC plays (Windows loopback audio), so quiz music and videos are heard. Camera and microphone are allowed for gathercall.uk only; other links and file downloads open in the normal browser. The menu (press Alt) has Home and *Quiz night (host)*. GitHub Actions (`.github/workflows/windows.yml`) builds it on every push that touches `windows/` and publishes the `win-latest` release:
+
+    https://github.com/immmahh-sketch/gather/releases/download/win-latest/Gather-Setup.exe
+
+It installs for the current user with no admin rights. It isn't code-signed, so Windows SmartScreen warns the first time (More info, then Run anyway). Because it loads the live site, site changes reach it without reinstalling; only changes in `windows/` need a new installer.
 
 ## Big files (Cloudflare R2)
 
