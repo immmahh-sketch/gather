@@ -100,13 +100,22 @@ The same wrapper has a second build (product flavour `quiz`, app id `uk.gatherca
     https://github.com/immmahh-sketch/gather/releases/download/tv-latest/quiz-tv.apk
     short link for Downloader: tinyurl.com/letsquiztv
 
-## Windows app
+## Desktop apps (Windows and Mac)
 
-`windows/` is an Electron window onto https://gathercall.uk. It adds a screen picker (Electron has none of its own) with a *Share computer sound* option that sends everything the PC plays (Windows loopback audio), so quiz music and videos are heard. Camera and microphone are allowed for gathercall.uk only; other links and file downloads open in the normal browser. The menu (press Alt) has Home and *Quiz night (host)*. GitHub Actions (`.github/workflows/windows.yml`) builds it on every push that touches `windows/` and publishes the `win-latest` release:
+`desktop/` is one Electron app built two ways (`builder-gather.json`, `builder-quiz.json`; the quiz build sets `gatherApp.quiz` in its packaged package.json):
+
+- **Gather** for Windows: a window onto https://gathercall.uk with a screen picker (Electron has none of its own) that has a *Share computer sound* option, sending everything the PC plays (Windows loopback audio) so quiz music and videos are heard. The menu (press Alt) has Home and *Quiz night (host)*.
+- **Let's Quiz** for Windows and Mac: opens straight onto `quiz/`. The Mac build is a universal dmg (Apple silicon and Intel), ad-hoc signed, and asks for camera and microphone on first launch.
+
+Both allow the camera and microphone for gathercall.uk only; other links and file downloads open in the normal browser. GitHub Actions (`.github/workflows/desktop.yml`) builds all three on every push that touches `desktop/` and publishes:
 
     https://github.com/immmahh-sketch/gather/releases/download/win-latest/Gather-Setup.exe
+    https://github.com/immmahh-sketch/gather/releases/download/quiz-app-latest/Lets-Quiz-Setup.exe
+    https://github.com/immmahh-sketch/gather/releases/download/quiz-app-latest/Lets-Quiz-Mac.dmg
 
-It installs for the current user with no admin rights. It isn't code-signed, so Windows SmartScreen warns the first time (More info, then Run anyway). Because it loads the live site, site changes reach it without reinstalling; only changes in `windows/` need a new installer.
+None are code-signed (paid Microsoft and Apple certificates), so Windows SmartScreen and macOS Gatekeeper warn the first time. The apps load the live site, so site changes reach them without reinstalling.
+
+**The page to send players: https://gathercall.uk/quizapp** (`quizapp/index.html`, no password). It puts the right option first for the device (Windows, Mac, Fire Stick or just the browser) and explains the first-run warnings.
 
 ## Big files (Cloudflare R2)
 
