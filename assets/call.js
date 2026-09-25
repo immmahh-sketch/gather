@@ -44,6 +44,7 @@
 
   const ICON = {
     micOff: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
+    hand: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>',
     pin: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
   };
 
@@ -825,7 +826,7 @@
     wrap.dataset.id = id;
     wrap.dataset.kind = opts.kind;
     wrap.innerHTML = '<video autoplay playsinline></video><div class="avatar"><span></span></div><div class="status">Connecting…</div>' +
-      '<div class="hand" title="Hand raised">✋<b></b></div>' +
+      '<div class="hand" title="Hand raised">' + ICON.hand + '<b></b></div>' +
       '<div class="badge"><span class="mic-off">' + ICON.micOff + '</span><span class="label"></span></div>' +
       '<button class="pin" type="button" title="Make this big">' + ICON.pin + '</button>';
     const video = wrap.querySelector('video');
@@ -892,14 +893,16 @@
     let stageId = pinned && tiles.has(pinned) ? pinned : latestShare;
     // Speaker view: the big picture is the pinned tile, else the newest shared
     // screen, else whoever is talking. Beside it: the shared screen (if it is
-    // not the big one), the talker, and you. Everyone else waits off screen,
-    // still heard.
+    // not the big one), the talker, raised hands, and you. Everyone else waits
+    // off screen, still heard.
     let side = null; // tile ids for the strip, in order; null means everyone
     if (view === 'speaker' && !tvMode) {
       const cams = all.filter(t => t.kind === 'cam' && !t.self);
       const talker = speaker || (cams.length ? cams[0].id : null);
       if (!stageId) stageId = talker;
-      side = [latestShare, talker, 'local:screen', 'local:cam'].filter((id, i, a) => id && id !== stageId && tiles.has(id) && a.indexOf(id) === i);
+      // Anyone with a hand up stays in view too, first up first.
+      const hands = [...peers.values()].filter(p => p.state.hand && !p.tv).sort((x, y) => x.state.hand - y.state.hand).map(p => p.id + ':cam');
+      side = [latestShare, talker, ...hands, 'local:screen', 'local:cam'].filter((id, i, a) => id && id !== stageId && tiles.has(id) && a.indexOf(id) === i);
     }
     el.call.classList.toggle('has-stage', !!stageId);
     if (tvMode) {
@@ -914,7 +917,7 @@
       t.el.classList.toggle('pinned', pinned === t.id);
     }
     if (side && [...el.strip.children].map(n => n.dataset.id).join() !== side.join()) {
-      // Keep the strip in a steady order: share, talker, you.
+      // Keep the strip in a steady order: share, talker, hands, you.
       for (const id of side) { const t = tiles.get(id); el.strip.appendChild(t.el); if (t.stream) t.video.play().catch(() => {}); }
     }
     const n = el.grid.children.length;
