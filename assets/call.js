@@ -82,13 +82,26 @@
   // ---------- gather-rtc API (Cloudflare behind a Supabase edge function) ----------
   const RTC = cfg.RTC_ENDPOINT || '';
   const authHeaders = () => ({ 'content-type': 'application/json', apikey: cfg.SUPABASE_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_KEY, 'x-gather-key': window.GATHER_KEY || '' });
+  // Every request gives up after 12 seconds. Changes to the video sessions run
+  // one at a time, so a request that never came back would otherwise freeze the
+  // call (seen when someone's connection had died: Cloudflare can sit on a
+  // renegotiation for a track that no longer sends).
+  const API_TIMEOUT = 12000;
   async function api(path, method, body) {
     let r;
-    try { r = await fetch(RTC + path, { method, headers: authHeaders(), body: body ? JSON.stringify(body) : undefined }); }
-    catch { throw new Error('unreachable'); }
-    if (r.status === 404 || r.status === 503) throw new Error('notdeployed');
-    if (!r.ok) throw new Error('server error ' + r.status);
-    const data = await r.json();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), API_TIMEOUT);
+    try { r = await fetch(RTC + path, { method, headers: authHeaders(), body: body ? JSON.stringify(body) : undefined, signal: ctl.signal }); }
+    catch (e) { throw new Error(e && e.name === 'AbortError' ? 'timed out' : 'unreachable'); }
+    finally { clearTimeout(timer); }
+    let data = null;
+    try { data = await r.json(); } catch {}
+    if (!r.ok) {
+      if (data && data.errorDescription) throw new Error(data.errorDescription);
+      if (r.status === 404 || r.status === 503) throw new Error('notdeployed');
+      throw new Error('server error ' + r.status);
+    }
+    if (!data) throw new Error('bad reply');
     if (data.errorCode) throw new Error(data.errorDescription || data.errorCode);
     return data;
   }
@@ -228,7 +241,8 @@
     localMids: new Map(),  // local trackName -> push mid
     published: [],         // local track names others may pull
     screenSeq: 0, attempts: 0, reconnecting: false, reconnectTimer: null,
-    retryTimer: null, retryCount: 0, pullTimer: null, pullFailures: 0
+    retryTimer: null, retryCount: 0, pullTimer: null, pullFailures: 0,
+    coolOff: new Map()     // publisher sessionId -> time until which we do not pull it
   };
   // Every change to the Cloudflare sessions goes through one queue, so neither
   // connection is ever asked to negotiate two things at once.
@@ -317,9 +331,14 @@
     resetPull();
   }
 
+  function pushLive() {
+    return !!(sfu.push.pc && sfu.push.sessionId && sfu.push.pc.connectionState === 'connected');
+  }
+
   function onPushState(pc) {
     if (pc !== sfu.push.pc) return;
     const s = pc.connectionState;
+    if (s === 'connected' || s === 'disconnected' || s === 'failed') updatePresence();
     if (s === 'connected') { setNet(''); clearTimeout(sfu.reconnectTimer); sfu.reconnectTimer = null; }
     else if (s === 'failed') reconnectSFU();
     else if (s === 'disconnected') {
@@ -431,9 +450,11 @@
   // ---------- pulling other people's tracks ----------
   function wantedPulls() {
     const wanted = new Map();
+    const now = Date.now();
     for (const p of peers.values()) {
       const st = p.state;
       if (!st.sessionId) continue;
+      if ((sfu.coolOff.get(st.sessionId) || 0) > now) continue;
       for (const name of st.tracks) {
         const key = st.sessionId + '/' + name;
         wanted.set(key, {
@@ -471,7 +492,18 @@
       const missing = [...wanted.values()].filter(w => !sfu.pulls.has(w.key));
       if (!missing.length) return;
       const pull = await ensurePull();
-      const failed = await pullTracks(pull, missing);
+      let failed;
+      try { failed = await pullTracks(pull, missing); }
+      catch (e) {
+        // If it hung, someone in this batch probably has a dead connection. Skip
+        // the batch for 15 seconds so the rebuild gets everyone else back first.
+        if (e && e.message === 'timed out') {
+          for (const w of missing) sfu.coolOff.set(w.sessionId, Date.now() + 15000);
+          clearTimeout(sfu.coolTimer);
+          sfu.coolTimer = setTimeout(syncPulls, 16000);
+        }
+        throw e;
+      }
       sfu.pullFailures = 0;
       if (!sfu.reconnecting && (!sfu.push.pc || sfu.push.pc.connectionState === 'connected')) setNet('');
       if (failed) scheduleRetry(); else sfu.retryCount = 0;
@@ -642,7 +674,10 @@
     if (local.screen) { local.screen.getTracks().forEach(t => t.stop()); local.screen = null; local.screenName = null; local.shareKind = null; }
     stopPresenter();
     keepAwake(false);
+    if (standIn) { standIn.stop(); standIn = null; }
+    local.liveCam = false;
     updatePresentBar();
+    setFilesOpen(false);
     for (const t of local.cam.getTracks()) t.stop();
     el.call.classList.add('hidden');
     el.left.classList.remove('hidden');
@@ -665,8 +700,10 @@
       name: local.name,
       mic: !!(local.audio && local.micOn),
       cam: !!(local.video && local.camOn && !local.liveCam),
-      sessionId: sfu.push.sessionId,
-      tracks: sfu.published.slice(),
+      // Advertise tracks only while the sending connection is up: pulling a dead
+      // one makes Cloudflare stall, and anyone joining meanwhile would wait on it.
+      sessionId: pushLive() ? sfu.push.sessionId : null,
+      tracks: pushLive() ? sfu.published.slice() : [],
       screen: local.screenName || null,
       shareKind: local.shareKind,
       tv: tvMode, // TVs watch only, so nobody gives them a tile
@@ -681,12 +718,14 @@
     channel = supa.channel('call-' + room, { config: { presence: { key: myId } } });
     channel
       .on('presence', { event: 'sync' }, onPresenceSync)
+      .on('broadcast', { event: 'file' }, ({ payload }) => { if (!tvMode) addShared(payload, true); })
       .on('presence', { event: 'leave' }, ({ key, currentPresences }) => {
         if (key !== myId && !(currentPresences && currentPresences.length)) { removePeer(key, true); syncPulls(); }
       })
       .subscribe(async status => {
         if (status === 'SUBSCRIBED') {
           everSubscribed = true;
+          loadFiles();
           if (!sfu.reconnecting) setNet('');
           await channel.track(presencePayload());
         } else if (joined && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')) {
@@ -900,6 +939,214 @@
     catch { prompt('Copy this link', roomLink); }
   }
 
+  // ---------- files ----------
+  // Files go straight from this device into a private Storage bucket (the server
+  // only hands out a one-off upload link), then a broadcast tells the room.
+  // Download links are fetched ahead of time so a tap opens them directly: on
+  // iPhones a link opened after a wait counts as a pop-up and gets blocked.
+  const MAX_FILE = 50 * 1024 * 1024;
+  const shared = { list: [], byPath: new Map(), unread: 0, open: false, loaded: false };
+  const fl = {
+    btn: $('#filesBtn'), badge: $('#filesBadge'), panel: $('#filesPanel'), list: $('#filesList'),
+    empty: $('#filesEmpty'), pick: $('#filesPick'), close: $('#filesClose'), input: $('#fileInput'), drop: $('#dropHint')
+  };
+  const FILE_ICONS = {
+    image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+    video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+    audio: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+    doc: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/>',
+    file: '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>'
+  };
+  function fileKind(f) {
+    const t = f.type || '', n = (f.name || '').toLowerCase();
+    if (t.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic|heif)$/.test(n)) return 'image';
+    if (t.startsWith('video/') || /\.(mp4|mov|m4v|webm)$/.test(n)) return 'video';
+    if (t.startsWith('audio/') || /\.(mp3|m4a|wav|aac|ogg)$/.test(n)) return 'audio';
+    if (/pdf|word|excel|spreadsheet|presentation|powerpoint|text/.test(t) || /\.(pdf|docx?|xlsx?|pptx?|txt|csv|rtf|odt|pages|numbers|key)$/.test(n)) return 'doc';
+    return 'file';
+  }
+  function fmtSize(n) {
+    if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(n >= 10 * 1024 * 1024 ? 0 : 1) + ' MB';
+    if (n >= 1024) return Math.round(n / 1024) + ' KB';
+    return n + ' bytes';
+  }
+  function fmtWhen(at) {
+    const mins = Math.round((Date.now() - at) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + ' min ago';
+    return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderBadge() {
+    fl.badge.textContent = shared.unread > 9 ? '9+' : String(shared.unread);
+    fl.badge.classList.toggle('hidden', !shared.unread);
+    fl.btn.classList.toggle('on', shared.open);
+  }
+
+  function renderFiles() {
+    fl.list.textContent = '';
+    fl.empty.classList.toggle('hidden', shared.list.length > 0);
+    for (const f of shared.list) {
+      const li = document.createElement('li');
+      li.className = 'fp-item';
+      const ico = document.createElement('span');
+      ico.className = 'fp-ico';
+      ico.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + FILE_ICONS[fileKind(f)] + '</svg>';
+      const meta = document.createElement('div');
+      meta.className = 'fp-meta';
+      const name = document.createElement('span');
+      name.className = 'fp-name';
+      name.textContent = f.name; // names come from other people: text only, never HTML
+      name.title = f.name;
+      const sub = document.createElement('span');
+      sub.className = 'fp-sub';
+      sub.textContent = [fmtSize(f.size || 0), f.from === local.name && f.mine ? 'You' : f.from, fmtWhen(f.at)].filter(Boolean).join(' · ');
+      meta.append(name, sub);
+      let action;
+      if (f.uploading) {
+        const bar = document.createElement('div');
+        bar.className = 'fp-bar';
+        bar.innerHTML = '<i></i>';
+        bar.firstChild.style.width = Math.round((f.progress || 0) * 100) + '%';
+        f.barEl = bar.firstChild;
+        meta.append(bar);
+        action = document.createElement('span');
+        action.className = 'fp-state';
+        action.textContent = 'Sending';
+      } else if (f.failed) {
+        action = document.createElement('span');
+        action.className = 'fp-state bad';
+        action.textContent = 'Not sent';
+        action.title = f.failed;
+      } else {
+        action = document.createElement('a');
+        action.className = 'fp-get' + (f.link ? '' : ' wait');
+        action.textContent = f.link ? 'Download' : 'Preparing';
+        action.target = '_blank'; // never replace the call page
+        action.rel = 'noopener';
+        if (f.link) { action.href = f.link; action.download = f.name; }
+      }
+      li.append(ico, meta, action);
+      fl.list.append(li);
+    }
+  }
+
+  function setFilesOpen(open) {
+    shared.open = open;
+    fl.panel.classList.toggle('hidden', !open);
+    if (open) { shared.unread = 0; ensureLinks(); }
+    renderBadge();
+  }
+  fl.btn.addEventListener('click', e => { e.stopPropagation(); setFilesOpen(!shared.open); });
+  fl.close.addEventListener('click', () => setFilesOpen(false));
+  fl.pick.addEventListener('click', () => { fl.input.value = ''; fl.input.click(); });
+  fl.input.addEventListener('change', () => sendFiles([...fl.input.files]));
+
+  function addShared(f, announce) {
+    if (!f || !f.path || shared.byPath.has(f.path)) return;
+    const item = { path: f.path, name: String(f.name || 'file').slice(0, 120), size: Number(f.size) || 0, type: String(f.type || ''), from: String(f.from || 'Someone').slice(0, 30), at: Number(f.at) || Date.now() };
+    shared.byPath.set(item.path, item);
+    shared.list.push(item);
+    shared.list.sort((a, b) => (b.uploading ? 1 : 0) - (a.uploading ? 1 : 0) || b.at - a.at);
+    if (announce) {
+      toast(item.from + ' sent ' + item.name);
+      if (!shared.open) shared.unread++;
+      renderBadge();
+    }
+    if (shared.open) ensureLinks();
+    renderFiles();
+  }
+
+  async function loadFiles() {
+    if (tvMode || shared.loaded) return;
+    shared.loaded = true;
+    try {
+      const d = await api('/files?room=' + encodeURIComponent(room), 'GET');
+      for (const f of d.files || []) addShared(f, false);
+    } catch (e) { shared.loaded = false; console.warn('files', e && e.message); }
+    renderFiles();
+  }
+
+  // Fetch download links for anything that has none, or whose link is getting old.
+  let linking = false;
+  async function ensureLinks() {
+    if (linking) return;
+    linking = true;
+    try {
+      for (const f of shared.list) {
+        if (f.uploading || f.failed || !f.path) continue;
+        if (f.link && Date.now() - f.linkAt < 45 * 60 * 1000) continue;
+        try {
+          const d = await api('/files/link?room=' + encodeURIComponent(room) + '&path=' + encodeURIComponent(f.path), 'GET');
+          f.link = d.url; f.linkAt = Date.now();
+        } catch (e) {
+          if (/expired|no longer/i.test(e.message)) { shared.list = shared.list.filter(x => x !== f); shared.byPath.delete(f.path); }
+        }
+        renderFiles();
+      }
+    } finally { linking = false; }
+  }
+
+  function uploadWithProgress(url, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open('PUT', url);
+      x.setRequestHeader('apikey', cfg.SUPABASE_KEY);
+      x.setRequestHeader('x-upsert', 'false');
+      x.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      x.onload = () => x.status < 300 ? resolve() : reject(new Error('upload failed (' + x.status + ')'));
+      x.onerror = () => reject(new Error('connection lost'));
+      const form = new FormData();
+      form.append('cacheControl', '3600');
+      form.append('', file, file.name);
+      x.send(form);
+    });
+  }
+
+  async function sendFiles(list) {
+    if (!list.length) return;
+    if (!shared.open) setFilesOpen(true);
+    for (const file of list) {
+      if (!file.size) { toast(file.name + ' is empty'); continue; }
+      if (file.size > MAX_FILE) { toast(file.name + ' is over 50 MB'); continue; }
+      const temp = { name: file.name, size: file.size, type: file.type, from: local.name, mine: true, at: Date.now(), uploading: true, progress: 0 };
+      shared.list.unshift(temp);
+      renderFiles();
+      try {
+        const up = await api('/files/upload', 'POST', { room, name: file.name, size: file.size, type: file.type, from: local.name });
+        await uploadWithProgress(up.uploadUrl, file, p => { temp.progress = p; if (temp.barEl) temp.barEl.style.width = Math.round(p * 100) + '%'; });
+        shared.list = shared.list.filter(x => x !== temp);
+        const done = { path: up.path, name: up.name, size: file.size, type: file.type || '', from: local.name, at: Date.now() };
+        addShared(done, false);
+        const mine = shared.byPath.get(done.path);
+        if (mine) mine.mine = true;
+        if (channel) channel.send({ type: 'broadcast', event: 'file', payload: done }).catch(() => {});
+        ensureLinks();
+      } catch (e) {
+        temp.uploading = false;
+        temp.failed = (e && e.message) || 'failed';
+        toast("Couldn't send " + file.name);
+        renderFiles();
+      }
+    }
+  }
+
+  // Drag files anywhere onto the call to send them (computers).
+  let dragDepth = 0;
+  const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+  window.addEventListener('dragenter', e => { if (!joined || tvMode || !hasFiles(e)) return; e.preventDefault(); dragDepth++; fl.drop.classList.remove('hidden'); });
+  window.addEventListener('dragover', e => { if (!joined || tvMode || !hasFiles(e)) return; e.preventDefault(); });
+  window.addEventListener('dragleave', e => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) fl.drop.classList.add('hidden'); });
+  window.addEventListener('drop', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    fl.drop.classList.add('hidden');
+    if (joined && !tvMode) sendFiles([...e.dataTransfer.files]);
+  });
+  // Keep "5 min ago" honest while the panel is open.
+  setInterval(() => { if (shared.open && !shared.list.some(f => f.uploading)) renderFiles(); }, 60000);
+
   // ---------- sharing: the screen, or photos and videos from this device ----------
   // Both go out the same way, as a "screen" track, so viewers and TVs treat them alike.
   const shareMenu = $('#shareMenu'), mediaInput = $('#mediaInput'), pool = $('#presenterPool');
@@ -914,6 +1161,7 @@
     e.stopPropagation();
     if (local.screen) { stopShare(); return; }
     shareMenu.classList.toggle('hidden');
+    if (typeof setFilesOpen === 'function' && shared.open) setFilesOpen(false);
   }
   document.addEventListener('click', e => { if (!shareMenu.contains(e.target)) shareMenu.classList.add('hidden'); });
   $('#shareScreenOpt').addEventListener('click', () => { shareMenu.classList.add('hidden'); startScreenShare(); });
@@ -1030,7 +1278,20 @@
   // TVs. Phones can only run one camera at a time, and sending the same picture
   // twice would waste the phone's upload, so the face tile pauses meanwhile.
   const liveConstraints = facing => ({ video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } } });
-  let wakeLock = null, liveCamBefore = null;
+  let wakeLock = null, liveCamBefore = null, standIn = null;
+
+  // A tiny black picture for the face-camera slot while the camera is shared live.
+  // Sending nothing would get the track deleted by Cloudflare after 30 seconds.
+  function blackTrack() {
+    const c = document.createElement('canvas');
+    c.width = 320; c.height = 180;
+    const x = c.getContext('2d');
+    const paint = () => { x.fillStyle = '#000'; x.fillRect(0, 0, c.width, c.height); };
+    paint();
+    const track = c.captureStream(2).getVideoTracks()[0];
+    const timer = setInterval(paint, 500);
+    return { track, stop() { clearInterval(timer); track.stop(); } };
+  }
 
   async function keepAwake(on) {
     try {
@@ -1060,7 +1321,7 @@
     liveCamBefore = { facing: local.facing, on: local.camOn };
     local.liveCam = true;
     const sender = camSender();
-    if (sender) { try { await sender.replaceTrack(null); } catch {} }
+    if (sender) { standIn = blackTrack(); try { await sender.replaceTrack(standIn.track); } catch {} }
     if (local.video) { local.cam.removeTrack(local.video); local.video.stop(); local.video = null; }
     applyMediaButtons();
     updatePresence();
@@ -1120,8 +1381,9 @@
       local.camOn = before.on;
       const sender = camSender();
       if (sender) { try { await sender.replaceTrack(nt); } catch (e) { console.warn('camera back', e); } }
+      if (standIn) { standIn.stop(); standIn = null; }
     } else {
-      toast('Could not turn your camera back on');
+      toast('Could not turn your camera back on'); // the black stand-in keeps the slot alive meanwhile
     }
     applyMediaButtons();
     updatePresence();
@@ -1146,7 +1408,12 @@
       ensureAudioContext();
       if (actx && actx.state === 'running') { dest = actx.createMediaStreamDestination(); stream.addTrack(dest.stream.getAudioTracks()[0]); }
     } catch (e) { console.warn('presenter audio', e); }
-    const p = { canvas, ctx, stream, dest, items: [], index: -1, tick: 0, last: null, timer: null };
+    // An audio stream with nothing feeding it sends no packets at all, and Cloudflare
+    // deletes a track that sends nothing for 30 seconds; pulling it after that stalls
+    // the receiver's whole session. A silent source keeps packets flowing.
+    let keep = null;
+    if (dest) { try { keep = actx.createConstantSource(); keep.offset.value = 0; keep.connect(dest); keep.start(); } catch {} }
+    const p = { canvas, ctx, stream, dest, keep, items: [], index: -1, tick: 0, last: null, timer: null };
     p.timer = setInterval(() => presenterDraw(p), 1000 / FPS);
     return p;
   }
@@ -1251,6 +1518,7 @@
       }
       URL.revokeObjectURL(it.url);
     }
+    try { if (p.keep) { p.keep.stop(); p.keep.disconnect(); } } catch {}
     try { if (p.dest) p.dest.disconnect(); } catch {}
     p.canvas.remove();
   }

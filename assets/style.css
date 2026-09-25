@@ -223,6 +223,44 @@ body.call-page { background: #0f1412; color: #f2f4f3; height: 100dvh; overflow: 
 #presenterPool { position: fixed; left: 0; top: 0; width: 2px; height: 2px; overflow: hidden; opacity: .01; pointer-events: none; }
 #presenterPool video, #presenterPool canvas { width: 2px; height: 2px; }
 
+/* files */
+.iconbtn { position: relative; width: 36px; height: 36px; border-radius: 50%; border: 0; background: #1e2622; color: #fff; display: grid; place-items: center; flex: 0 0 auto; }
+.iconbtn:hover { background: #262f2a; }
+.iconbtn.on { background: var(--brand); }
+.badge-count { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #3ddc84; color: #0f1412; font-size: 11px; font-weight: 800; display: grid; place-items: center; line-height: 1; }
+.filespanel { position: fixed; top: calc(64px + env(safe-area-inset-top)); right: 12px; bottom: calc(88px + env(safe-area-inset-bottom)); width: 360px; z-index: 15; display: flex; flex-direction: column; background: #161c19; border: 1px solid #2a332e; border-radius: 18px; box-shadow: 0 24px 60px -12px rgba(0, 0, 0, .8); overflow: hidden; }
+.fp-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 6px 18px; }
+.fp-head h2 { margin: 0; font-size: 18px; }
+.fp-close { width: 34px; height: 34px; border-radius: 50%; border: 0; background: none; color: #c9d3ce; display: grid; place-items: center; }
+.fp-close:hover { background: #22302a; }
+.fp-send { padding: 6px 18px 14px; border-bottom: 1px solid #232b27; }
+.fp-send .btn { width: 100%; }
+.fp-send small { display: block; color: #8d9792; font-size: 12.5px; margin-top: 8px; line-height: 1.4; }
+.fp-list { list-style: none; margin: 0; padding: 6px 8px 10px; overflow-y: auto; flex: 1; }
+.fp-empty { color: #8d9792; font-size: 14px; text-align: center; padding: 24px 24px 30px; margin: 0; }
+.fp-item { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; padding: 10px; border-radius: 12px; }
+.fp-item:hover { background: #1c2420; }
+.fp-ico { width: 40px; height: 40px; border-radius: 10px; background: #22302a; color: #3ddc84; display: grid; place-items: center; }
+.fp-meta { min-width: 0; }
+.fp-name { display: block; font-weight: 700; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-sub { display: block; color: #8d9792; font-size: 12.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-bar { height: 4px; border-radius: 2px; background: #2a332e; margin-top: 7px; overflow: hidden; }
+.fp-bar i { display: block; height: 100%; width: 0; background: #3ddc84; transition: width .2s; }
+.fp-get { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 10px; background: #22302a; color: #fff; text-decoration: none; font-size: 13.5px; font-weight: 700; white-space: nowrap; }
+.fp-get:hover { background: #2c3d35; }
+.fp-get.wait { opacity: .55; pointer-events: none; }
+.fp-state { color: #8d9792; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.fp-state.bad { color: #ff8a8a; }
+.drophint { position: fixed; inset: 10px; z-index: 30; border: 3px dashed #3ddc84; border-radius: 22px; background: rgba(15, 20, 18, .82); display: grid; place-items: center; pointer-events: none; }
+.drophint div { font-size: 26px; font-weight: 800; color: #fff; }
+@media (max-width: 700px) {
+  .filespanel { left: 8px; right: 8px; width: auto; top: auto; max-height: 64vh; bottom: calc(84px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 420px) {
+  .bar #timer { display: none; }
+}
+body.tv #filesBtn, body.tv .filespanel, body.tv .drophint { display: none; }
+
 /* TV mode: nothing to press, bigger labels, remote's Back leaves */
 body.tv .presentbar, body.tv .sharemenu { display: none; }
 
