@@ -2,6 +2,7 @@
   "appId": "uk.letsquiz.host",
   "productName": "Let's Quiz Host",
   "extraMetadata": {
+    "name": "lets-quiz-host",
     "productName": "Let's Quiz Host",
     "gatherApp": {
       "host": true

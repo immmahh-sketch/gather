@@ -2,6 +2,7 @@
   "appId": "uk.gathercall.quiz",
   "productName": "Let's Quiz",
   "extraMetadata": {
+    "name": "lets-quiz-app",
     "productName": "Let's Quiz",
     "gatherApp": {
       "quiz": true

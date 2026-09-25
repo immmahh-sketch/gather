@@ -25,5 +25,8 @@
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
     "shortcutName": "Gather"
+  },
+  "extraMetadata": {
+    "name": "gather-desktop"
   }
 }
