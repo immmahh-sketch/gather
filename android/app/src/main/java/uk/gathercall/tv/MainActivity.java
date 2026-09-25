@@ -13,13 +13,13 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 /**
- * Gather TV: a full-screen window onto https://gathercall.uk/tv.html.
- * The page does the work (room picker, then the call in TV mode). This
- * wrapper keeps the screen on, keeps links inside the app and maps the
- * remote's Back button to leaving the room.
+ * Gather TV: a full-screen window onto https://gathercall.uk/tv.html, or, in
+ * the Let's Quiz TV build, straight onto the quiz room in TV mode. The page
+ * does the work. This wrapper keeps the screen on, keeps links inside the app
+ * and maps the remote's Back button to leaving the room.
  */
 public class MainActivity extends Activity {
-    private static final String HOME = "https://gathercall.uk/tv.html";
+    private static final String HOME = BuildConfig.HOME_URL;
     private WebView web;
 
     @Override

@@ -1,4 +1,4 @@
-name: Build Gather TV APK
+name: Build Gather TV and Let's Quiz TV APKs
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
       - name: Restore signing keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/gather-tv.p12"
 
-      - name: Build signed release APK
+      - name: Build signed release APKs
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/gather-tv.p12
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -38,7 +38,8 @@ jobs:
         run: |
           cd android
           gradle assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/gather-tv.apk"
+          cp app/build/outputs/apk/gather/release/app-gather-release.apk "$RUNNER_TEMP/gather-tv.apk"
+          cp app/build/outputs/apk/quiz/release/app-quiz-release.apk "$RUNNER_TEMP/quiz-tv.apk"
 
       - name: Publish as the tv-latest release
         uses: softprops/action-gh-release@v2
@@ -46,7 +47,13 @@ jobs:
           tag_name: tv-latest
           name: Gather TV for Fire Stick
           body: |
-            Sideload this on a Fire TV Stick (or any Android TV box). It opens https://gathercall.uk/tv.html, asks for the site password once, then lets you watch any room full screen.
+            Two apps to sideload on a Fire TV Stick (or any Android TV box). Both can be installed side by side.
 
+            **Gather TV** opens https://gathercall.uk/tv.html, asks for the site password once, then lets you watch any room full screen.
             Direct download: https://github.com/immmahh-sketch/gather/releases/download/tv-latest/gather-tv.apk
-          files: ${{ runner.temp }}/gather-tv.apk
+
+            **Let's Quiz TV** goes straight into the quiz night room, asks for the quiz password once, and shows the quizmaster's shared screen full screen.
+            Direct download: https://github.com/immmahh-sketch/gather/releases/download/tv-latest/quiz-tv.apk
+          files: |
+            ${{ runner.temp }}/gather-tv.apk
+            ${{ runner.temp }}/quiz-tv.apk

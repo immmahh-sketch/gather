@@ -14,6 +14,28 @@ android {
         versionName System.getenv('APP_VERSION_NAME') ?: '1.0'
     }
 
+    buildFeatures {
+        buildConfig true
+    }
+
+    // Two apps from one source: Gather TV (pick any room) and Let's Quiz TV
+    // (straight into the quiz room). Different ids, so both can be installed.
+    flavorDimensions 'app'
+    productFlavors {
+        gather {
+            dimension 'app'
+            applicationId 'uk.gathercall.tv'
+            buildConfigField 'String', 'HOME_URL', '"https://gathercall.uk/tv.html"'
+            resValue 'string', 'app_name', 'Gather TV'
+        }
+        quiz {
+            dimension 'app'
+            applicationId 'uk.gathercall.quiztv'
+            buildConfigField 'String', 'HOME_URL', '"https://gathercall.uk/quiz/?tv=1"'
+            resValue 'string', 'app_name', 'Let’s Quiz TV'
+        }
+    }
+
     signingConfigs {
         release {
             def ks = System.getenv('KEYSTORE_FILE')
