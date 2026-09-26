@@ -60,13 +60,59 @@
     del(id) { const v = this.all(); delete v[id]; try { localStorage.setItem('gather.linkpw', JSON.stringify(v)); } catch {} }
   };
 
+  // The desktop app (Electron) has no window.prompt/confirm, so we use our own.
+  function dialog({ title, sub, input, placeholder, ok, cancel }) {
+    return new Promise(resolve => {
+      const wrap = document.createElement('div');
+      wrap.className = 'lkdlg';
+      wrap.innerHTML =
+        '<div class="lkdlg-card">' +
+        '<h3></h3>' + (sub ? '<p></p>' : '') +
+        (input ? '<input type="text" maxlength="30" autocomplete="off">' : '') +
+        '<div class="lkdlg-row"><button type="button" class="btn lkdlg-cancel"></button><button type="button" class="btn primary lkdlg-ok"></button></div>' +
+        '</div>';
+      wrap.querySelector('h3').textContent = title;
+      if (sub) wrap.querySelector('p').textContent = sub;
+      const field = wrap.querySelector('input');
+      if (field) field.placeholder = placeholder || '';
+      wrap.querySelector('.lkdlg-ok').textContent = ok || 'OK';
+      wrap.querySelector('.lkdlg-cancel').textContent = cancel || 'Cancel';
+      document.body.appendChild(wrap);
+      const close = val => { wrap.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+      const onKey = e => { if (e.key === 'Escape') close(null); if (e.key === 'Enter' && field) { e.preventDefault(); close(field ? field.value : true); } };
+      document.addEventListener('keydown', onKey);
+      wrap.addEventListener('mousedown', e => { if (e.target === wrap) close(null); });
+      wrap.querySelector('.lkdlg-cancel').addEventListener('click', () => close(null));
+      wrap.querySelector('.lkdlg-ok').addEventListener('click', () => close(field ? field.value : true));
+      setTimeout(() => (field || wrap.querySelector('.lkdlg-ok')).focus(), 30);
+    });
+  }
+  const askText = (title, sub, placeholder, ok) => dialog({ title, sub, input: true, placeholder, ok: ok || 'Create' });
+  const askConfirm = (title, sub, ok) => dialog({ title, sub, input: false, ok: ok || 'Delete', cancel: 'Keep it' });
+
   const urlFor = id => base + 'f/#' + id;
   const fmtSize = n => n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : n >= 1048576 ? Math.round(n / 1048576) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : (n || 0) + ' B';
   const fmtWhen = at => { const m = Math.round((Date.now() - at) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : new Date(at).toLocaleDateString(); };
-  async function copy(text, note) { try { await navigator.clipboard.writeText(text); toast(note || 'Copied'); } catch { prompt('Copy this', text); } }
+  async function copy(text, note) {
+    try { await navigator.clipboard.writeText(text); toast(note || 'Copied'); return; } catch {}
+    // Clipboard blocked: show the text so it can be copied by hand.
+    const wrap = document.createElement('div');
+    wrap.className = 'lkdlg';
+    wrap.innerHTML = '<div class="lkdlg-card"><h3>Copy this</h3><textarea rows="3" readonly></textarea><div class="lkdlg-row"><button type="button" class="btn primary">Done</button></div></div>';
+    wrap.querySelector('textarea').value = text;
+    document.body.appendChild(wrap);
+    const ta = wrap.querySelector('textarea');
+    ta.focus(); ta.select();
+    const close = () => wrap.remove();
+    wrap.querySelector('button').addEventListener('click', close);
+    wrap.addEventListener('mousedown', e => { if (e.target === wrap) close(); });
+  }
 
   async function makeLink(kind) {
-    const who = prompt(kind === 'in' ? 'Who is this link for? (a name, just so you can tell links apart)' : 'Who are you sending to? (a name to label this link)', '');
+    const who = await askText(
+      kind === 'in' ? 'Let someone send me a file' : 'Send a file to someone',
+      kind === 'in' ? 'Give it a name so you can tell your links apart — for example who it\'s for.' : 'Who is this for? Just a name so you can tell your links apart.',
+      'e.g. Auntie Sue');
     if (who === null) return;
     const label = who.trim().slice(0, 30);
     const id = rand(10);
@@ -110,7 +156,7 @@
     if (pw) both.addEventListener('click', () => copy((inbound ? 'Send me a file here:\n' : 'A file for you here:\n') + url + '\nPassword: ' + pw, 'Link and password copied'));
     else both.disabled = true;
     li.querySelector('.lc-del').addEventListener('click', async () => {
-      if (!confirm('Delete this link? Anyone holding it will no longer be able to use it.')) return;
+      if (!(await askConfirm('Delete this link?', 'Anyone holding it will no longer be able to use it.'))) return;
       try { await api('/link/delete', 'POST', { id: link.id }); vault.del(link.id); li.remove(); refreshEmpty(); toast('Link deleted'); }
       catch (e) { toast('Could not delete: ' + e.message); }
     });

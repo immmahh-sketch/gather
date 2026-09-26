@@ -460,3 +460,13 @@ body.tv .soon-when { font-size: 30px; }
 .lb-status { color: #cfe9df; font-size: 14px; min-height: 20px; margin-bottom: 8px; }
 .lb-foot { color: #7f8a84; font-size: 13px; margin: 10px 0 0; }
 .lb-empty { color: #9aa39e; }
+
+/* Small in-page dialog (the desktop app has no window.prompt/confirm) */
+.lkdlg { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 20px; background: rgba(12, 16, 14, .55); backdrop-filter: blur(3px); }
+.lkdlg-card { width: 100%; max-width: 400px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; box-shadow: 0 20px 50px -18px rgba(0,0,0,.5); }
+.lkdlg-card h3 { margin: 0 0 8px; font-size: 20px; letter-spacing: -0.01em; }
+.lkdlg-card p { margin: 0 0 14px; color: var(--muted); font-size: 14.5px; }
+.lkdlg-card input, .lkdlg-card textarea { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: #f6f2ea; color: var(--ink); font-size: 16px; font-family: inherit; margin-bottom: 16px; }
+.lkdlg-card input:focus, .lkdlg-card textarea:focus { outline: 2px solid var(--brand); }
+.lkdlg-row { display: flex; gap: 10px; justify-content: flex-end; }
+.lkdlg-row .btn { padding: 10px 18px; }
