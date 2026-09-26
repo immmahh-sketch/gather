@@ -45,7 +45,8 @@
   const ICON = {
     micOff: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
     hand: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>',
-    pin: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+    pin: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
+    expand: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
   };
 
   // ---------- state ----------
@@ -866,6 +867,25 @@
   }
 
   // ---------- tiles ----------
+  // Make one shared-screen (or camera) picture fill the whole display. Uses the
+  // real Fullscreen API where it exists (desktop browsers, the Windows and Mac
+  // apps) and the iPhone's video-only fullscreen otherwise. TVs already fill the
+  // screen on their own (see the tv-full class), so this is for the other viewers.
+  function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  function exitFullscreen() {
+    if (document.exitFullscreen) return document.exitFullscreen().catch(() => {});
+    if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+  function toggleFullscreen(t) {
+    if (!t) return;
+    if (fsElement() || document.fullscreenElement) { exitFullscreen(); return; }
+    const box = t.el, vid = t.video;
+    if (box.requestFullscreen) box.requestFullscreen().catch(() => { if (vid.webkitEnterFullscreen) vid.webkitEnterFullscreen(); });
+    else if (box.webkitRequestFullscreen) box.webkitRequestFullscreen();
+    else if (vid.webkitEnterFullscreen) vid.webkitEnterFullscreen(); // iPhone: video only
+    else toast('This device cannot go full screen');
+  }
+
   function getTile(id, opts) {
     let t = tiles.get(id);
     if (t) return t;
@@ -876,12 +896,16 @@
     wrap.innerHTML = '<video autoplay playsinline></video><div class="avatar"><span></span></div><div class="status">Connecting…</div>' +
       '<div class="hand" title="Hand raised">' + ICON.hand + '<b></b></div>' +
       '<div class="badge"><span class="mic-off">' + ICON.micOff + '</span><span class="label"></span></div>' +
-      '<button class="pin" type="button" title="Make this big">' + ICON.pin + '</button>';
+      '<button class="pin" type="button" title="Make this big">' + ICON.pin + '</button>' +
+      '<button class="fs" type="button" title="Full screen">' + ICON.expand + '</button>';
     const video = wrap.querySelector('video');
     if (opts.self) { video.muted = true; video.setAttribute('muted', ''); }
     wrap.querySelector('.pin').addEventListener('click', ev => { ev.stopPropagation(); pinned = pinned === id ? null : id; render(); });
+    wrap.querySelector('.fs').addEventListener('click', ev => { ev.stopPropagation(); toggleFullscreen(t); });
     // Tapping anyone who is not already the big picture makes them big.
     wrap.addEventListener('click', () => { if (!tvMode && wrap.parentNode !== el.stage) { pinned = id; render(); } });
+    // Double-tap the picture to fill the screen (and again to come back).
+    wrap.addEventListener('dblclick', ev => { if (tvMode) return; ev.preventDefault(); toggleFullscreen(t); });
     t = { id, el: wrap, video, stream: null, peerId: opts.peerId, kind: opts.kind, self: !!opts.self };
     tiles.set(id, t);
     return t;

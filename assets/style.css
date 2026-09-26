@@ -472,3 +472,14 @@ body.tv .soon-when { font-size: 30px; }
 .lkdlg-card input:focus, .lkdlg-card textarea:focus { outline: 2px solid var(--brand); }
 .lkdlg-row { display: flex; gap: 10px; justify-content: flex-end; }
 .lkdlg-row .btn { padding: 10px 18px; }
+
+/* Viewer full screen (button on each tile + the fullscreen state) */
+.tile .fs { position: absolute; top: 10px; right: 48px; width: 32px; height: 32px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .55); color: #fff; display: grid; place-items: center; opacity: 0; transition: opacity .15s; z-index: 3; }
+.tile:hover .fs, .tile.pinned .fs { opacity: 1; }
+.tile .fs:hover { background: rgba(0, 0, 0, .78); }
+@media (pointer: coarse) { .tile .fs { opacity: .7; } }
+body.tv .tile .fs { display: none; }
+.tile:fullscreen, .tile:-webkit-full-screen { width: 100vw; height: 100vh; border-radius: 0; background: #000; }
+.tile:fullscreen video, .tile:-webkit-full-screen video { object-fit: contain; background: #000; }
+.tile:fullscreen .pin, .tile:fullscreen .hand, .tile:fullscreen .badge, .tile:-webkit-full-screen .badge { display: none; }
+.tile:fullscreen .fs, .tile:-webkit-full-screen .fs { opacity: .85; }
