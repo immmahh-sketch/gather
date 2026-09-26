@@ -1097,7 +1097,7 @@
       catch (e) { if (e.name === 'AbortError') return; }
     }
     try { await navigator.clipboard.writeText(roomLink); toast('Link copied'); }
-    catch { prompt('Copy this link', roomLink); }
+    catch { if (window.GatherUI) GatherUI.copyBox(roomLink); else prompt('Copy this link', roomLink); }
   }
 
   // ---------- files ----------

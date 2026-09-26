@@ -27,6 +27,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/style.css">
 <script src="assets/config.js"></script>
+<script src="assets/ui.js"></script>
 <script src="assets/gate.js"></script>
 </head>
 <body>
@@ -242,7 +243,7 @@
   $('#openPerm').addEventListener('click', () => { location.href = linkFor(perm); });
   $('#copyPerm').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(linkFor(perm)); $('#copyPerm').textContent = 'Copied'; setTimeout(() => $('#copyPerm').textContent = 'Copy link', 1500); }
-    catch { prompt('Copy this link', linkFor(perm)); }
+    catch { GatherUI.copyBox(linkFor(perm)); }
   });
   const shareBtn = $('#sharePerm');
   if (!navigator.share) shareBtn.classList.add('hidden');

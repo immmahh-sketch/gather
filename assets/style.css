@@ -447,7 +447,9 @@ body.tv .soon-when { font-size: 30px; }
 .lb-card input[type=password], .lb-card .lb-name { width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid #2a332e; background: #0f1412; color: #fff; font-size: 16px; margin-bottom: 12px; }
 .lb-card input:focus { outline: 2px solid var(--brand); }
 .lb-err { color: #ff8a8a; font-size: 14px; min-height: 20px; margin-bottom: 6px; }
-.lb-card .btn { width: 100%; }
+/* Full-width only for the main actions, not the per-file Get/Download in a row. */
+.lb-card > .btn, #gateForm .btn, #sendBtn, #refresh { width: 100%; }
+.lb-list .lb-get { width: auto; flex: 0 0 auto; }
 .lb-drop { display: flex; align-items: center; justify-content: center; text-align: center; gap: 8px; border: 2px dashed #2f3a34; border-radius: 14px; padding: 26px 16px; color: #9aa39e; font-weight: 600; cursor: pointer; margin-bottom: 12px; }
 .lb-drop.over { border-color: var(--brand); background: rgba(18,128,95,.15); color: #cfe9df; }
 .lb-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
