@@ -120,6 +120,17 @@ None are code-signed (paid Microsoft and Apple certificates), so Windows SmartSc
 
 **The page to send players: https://gathercall.uk/quizapp** (`quizapp/index.html`, no password). It puts the right option first for the device (Windows, Mac, Fire Stick or just the browser) and explains the first-run warnings.
 
+## Private file links
+
+For sending files to and from people who don't have Gather, the home page has **Private file links** (`assets/links.js`, guest page `f/index.html`, server routes `/link/*` in `gather-rtc`). Two kinds:
+
+- **Let someone send me a file** (`in`): they open the link, type its password, upload a file (up to 20 GB), and it lands in a dropbox you collect from the same card.
+- **Send a file to someone** (`out`): you drop a file on the card, they open the link, type its password, and download it.
+
+Each link is one empty object under `_links/` in the `gather-files` bucket, all its facts in the name: `_links/<at>.<id>.<kind>.<sha256 of password>.<label hex>`. No database. Only the password's SHA-256 is stored, so it can't be read back; the plain password is kept in the maker's own browser (`localStorage` `gather.linkpw`) so it can be copied again from that device. The link's files live in the normal inbox storage under the made-up name `link-<id>`, so they expire after 7 days and sweep like any direct file.
+
+Guests authenticate with a `x-gather-link: <id>:<password>` header instead of the site password. The server (`verifyLink`) checks the hash and limits guessing (8 tries per id per 10 minutes). A guest can only touch its own link's dropbox and only in its own direction: an `in` guest can upload but not read, an `out` guest can read but not upload. The owner (site password) can do both on any link. Guests may also use the `/upload/*` multipart plumbing. Links are made, listed and deleted only with the site password.
+
 ## Big files (Cloudflare R2)
 
 Files up to 20 GB go to the Cloudflare R2 bucket `gather-files` (Western Europe, private). The browser uploads straight to R2 in 16 MB+ parts, four at a time, each part retried with backoff, using links pre-signed by `gather-rtc`; the function then completes the multipart upload (a signed ticket stops anyone completing or cancelling uploads it did not start). Downloads are pre-signed links that save under the original name. Call files live under `rooms/<room>/`, direct files under `inbox/<person>/`.
