@@ -16,6 +16,13 @@
 //   POST /inbox/upload                          signed upload URL for a file to a person
 //   GET  /inbox?me=                             files sent to me in the last 7 days
 //   GET  /inbox/link?me=&path=                  short-lived download link
+//   POST /link/new     (site pw)              make a share link {id,kind,passHash,label}
+//   GET  /link/list    (site pw)              the owner's share links
+//   POST /link/delete  (site pw)              remove a share link
+//   GET  /link/check   (link pw)              a guest confirms their link + password
+//   POST /link/upload  (site or 'in' link)    a file into a link's dropbox
+//   GET  /link/files   (site or 'out' link)   files in a link's dropbox
+//   GET  /link/file?id=&path= (site/'out')    short-lived download link
 //   GET  /upload/limits                         biggest file allowed right now
 //   POST /upload/complete, /upload/abort        finish or cancel a multipart upload to R2
 //
@@ -64,7 +71,7 @@ function cors(origin: string | null) {
   const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "access-control-allow-origin": allow,
-    "access-control-allow-headers": "authorization, apikey, content-type, x-gather-key",
+    "access-control-allow-headers": "authorization, apikey, content-type, x-gather-key, x-gather-link",
     "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
     "vary": "origin",
     "cache-control": "no-store",
@@ -249,6 +256,157 @@ function cleanPersonName(n: string) {
   return [...s].slice(0, 30).join("");
 }
 const personKey = (name: string) => toHex(cleanPersonName(name).toLowerCase());
+
+// ---------- share links ----------
+// A share link is one empty object under _links/, all its facts in the name:
+//   _links/<at>.<id>.<kind>.<passHashHex>.<labelHex>
+// kind "in"  = someone sends the owner a file; kind "out" = the owner leaves a
+// file for someone. The link's files live in the same inbox storage as direct
+// files, under the folder for the made-up name "link-<id>", so they expire and
+// sweep the same way. The password is never stored, only its SHA-256.
+const LINKS = "_links";
+const LINK_RE = /^(\d{13})\.([a-z0-9]{6,40})\.(in|out)\.([0-9a-f]{64})\.((?:[0-9a-f]{2})*)$/;
+const linkStoreKey = (id: string) => toHex("link-" + id);
+async function findLink(id: string) {
+  if (!/^[a-z0-9]{6,40}$/.test(id)) return null;
+  for (const o of await listPrefix(LINKS + "/")) {
+    if (!o || !o.id) continue;
+    const m = LINK_RE.exec(o.name);
+    if (m && m[2] === id) return { at: Number(m[1]), id, kind: m[3], passHash: m[4], label: fromHex(m[5]), obj: o.name };
+  }
+  return null;
+}
+const linkTries = new Map<string, { n: number; t: number }>();
+async function verifyLink(header: string | null) {
+  if (!header) return null;
+  const i = header.indexOf(":");
+  if (i < 0) return null;
+  const id = header.slice(0, i), password = header.slice(i + 1);
+  // Slow down guessing: 8 tries per id per 10 minutes.
+  const now = Date.now();
+  const t = linkTries.get(id);
+  if (t && now - t.t < 600000 && t.n >= 8) return null;
+  const link = await findLink(id);
+  const ok = !!link && (await sha256hex(password)) === link!.passHash;
+  if (!ok) { linkTries.set(id, { n: (t && now - t.t < 600000 ? t.n : 0) + 1, t: t && now - t.t < 600000 ? t.t : now }); return null; }
+  linkTries.delete(id);
+  return link;
+}
+
+// A link's dropbox reuses the inbox helpers (R2 or Supabase Storage).
+async function linkUploadPlan(id: string, name: string, size: number, type: string, from: string) {
+  const key = linkStoreKey(id);
+  const rand = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
+  const clean = trimName(name || "file");
+  const leaf = `${Date.now()}.${rand}.${toHex(from)}.${encodeName(clean)}`;
+  if (R2_ON) return { ...(await r2Start(`inbox/${key}/${leaf}`, size, type)), path: `inbox/${key}/${leaf}`, name: clean };
+  const storeKey = `${INBOX}/${key}/${leaf}`;
+  const r = await storage(`/object/upload/sign/${BUCKET}/${enc(storeKey)}`, { method: "POST", body: "{}" });
+  if (!r.ok) throw new Error("sign: " + (await r.text()).slice(0, 200));
+  const d = await r.json();
+  const token = new URL(`${SUPA_URL}/storage/v1${d.url}`).searchParams.get("token") || d.token || "";
+  return { path: storeKey, name: clean, uploadUrl: `${SUPA_URL}/storage/v1/object/upload/sign/${BUCKET}/${enc(storeKey)}?token=${encodeURIComponent(token)}` };
+}
+async function linkFiles(id: string): Promise<FileRow[]> {
+  const key = linkStoreKey(id);
+  return R2_ON
+    ? [...(await r2List(`inbox/${key}/`, INBOX_KEEP_MS)), ...(await freshInbox(key).catch(() => []))].sort((a, b) => b.at - a.at)
+    : await freshInbox(key);
+}
+async function linkFileLink(id: string, key: string) {
+  const store = linkStoreKey(id);
+  const r2prefix = `inbox/${store}/`, oldPrefix = `${INBOX}/${store}/`;
+  const prefix = key.startsWith(r2prefix) ? r2prefix : oldPrefix;
+  if (!key.startsWith(prefix) || key.includes("..")) return null;
+  const m = KEY_RE.exec(key.slice(prefix.length));
+  if (!m || Date.now() - Number(m[1]) > INBOX_KEEP_MS) return null;
+  if (prefix === r2prefix) return await r2Link(key, decodeName(m[4]));
+  const r = await storage(`/object/sign/${BUCKET}/${enc(key)}`, { method: "POST", body: JSON.stringify({ expiresIn: 3600 }) });
+  if (!r.ok) return null;
+  const d = await r.json();
+  const token = new URL(`${SUPA_URL}/storage/v1${d.signedURL || d.signedUrl}`).searchParams.get("token") || "";
+  return `${SUPA_URL}/storage/v1/object/sign/${BUCKET}/${enc(key)}?token=${encodeURIComponent(token)}&download=${encodeURIComponent(decodeName(m[4]))}`;
+}
+
+async function handleLink(path: string, req: Request, url: URL, headers: Record<string, string>, auth: { site: boolean; link: { id: string; kind: string; label: string } | null }): Promise<Response | null> {
+  if (!SUPA_URL || !SERVICE_KEY) return json({ errorCode: "not_configured", errorDescription: "Storage is not available" }, 503, headers);
+  await ensureBucket();
+  const { site, link } = auth;
+
+  // A guest confirms their link opened and the password is right.
+  if (path === "/link/check" && req.method === "GET") {
+    if (!link) return json({ errorCode: "unauthorized", errorDescription: "Wrong password" }, 401, headers);
+    return json({ ok: true, kind: link.kind, label: link.label }, 200, headers);
+  }
+
+  // Owner only: make, list and remove links.
+  if (path === "/link/new" && req.method === "POST") {
+    if (!site) return json({ errorCode: "forbidden", errorDescription: "Owner only" }, 403, headers);
+    const b = await req.json().catch(() => ({} as Record<string, unknown>));
+    const id = String(b.id || "");
+    const kind = String(b.kind || "");
+    const passHash = String(b.passHash || "");
+    const label = cleanPersonName(String(b.label || "")) || (kind === "out" ? "Someone" : "A sender");
+    if (!/^[a-z0-9]{6,40}$/.test(id) || (kind !== "in" && kind !== "out") || !/^[0-9a-f]{64}$/.test(passHash)) {
+      return json({ errorCode: "bad_request", errorDescription: "Bad link details" }, 400, headers);
+    }
+    if (await findLink(id)) return json({ errorCode: "exists", errorDescription: "Try again" }, 409, headers);
+    await putEmpty(`${LINKS}/${Date.now()}.${id}.${kind}.${passHash}.${toHex(label)}`);
+    return json({ ok: true, id, kind, label }, 200, headers);
+  }
+  if (path === "/link/list" && req.method === "GET") {
+    if (!site) return json({ errorCode: "forbidden", errorDescription: "Owner only" }, 403, headers);
+    const out: Array<Record<string, unknown>> = [];
+    for (const o of await listPrefix(LINKS + "/")) {
+      const m = o && o.id ? LINK_RE.exec(o.name) : null;
+      if (m) out.push({ id: m[2], kind: m[3], label: fromHex(m[5]), at: Number(m[1]) });
+    }
+    out.sort((a, b) => (b.at as number) - (a.at as number));
+    return json({ links: out }, 200, headers);
+  }
+  if (path === "/link/delete" && req.method === "POST") {
+    if (!site) return json({ errorCode: "forbidden", errorDescription: "Owner only" }, 403, headers);
+    const b = await req.json().catch(() => ({} as Record<string, unknown>));
+    const found = await findLink(String(b.id || ""));
+    if (found) await removeKeys([`${LINKS}/${found.obj}`]);
+    return json({ ok: true }, 200, headers);
+  }
+
+  // Put a file into a link's dropbox: the owner (site) to any link, or a guest
+  // whose own link is a "send-to-me" one.
+  if (path === "/link/upload" && req.method === "POST") {
+    const b = await req.json().catch(() => ({} as Record<string, unknown>));
+    const id = String(b.id || (link ? link.id : ""));
+    const allowed = site || (!!link && link.kind === "in" && link.id === id);
+    if (!allowed) return json({ errorCode: "forbidden", errorDescription: "Not allowed" }, 403, headers);
+    if (!(await findLink(id))) return json({ errorCode: "gone", errorDescription: "This link no longer works" }, 404, headers);
+    const size = Number(b.size || 0);
+    if (!(size > 0)) return json({ errorCode: "empty", errorDescription: "That file is empty" }, 400, headers);
+    if (size > (R2_ON ? R2_MAX_BYTES : MAX_BYTES)) return json({ errorCode: "too_large", errorDescription: "Files can be up to " + (R2_ON ? "20 GB" : "50 MB") }, 413, headers);
+    const from = site ? "Me" : (cleanPersonName(String(b.from || "")) || "Someone");
+    const plan = await linkUploadPlan(id, String(b.name || "file"), size, String(b.type || ""), from);
+    sweepAll().catch(() => {});
+    return json(plan, 200, headers);
+  }
+
+  // Read a link's dropbox: the owner (site) for any link, or a guest whose own
+  // link is a "the owner leaves me files" one.
+  if (path === "/link/files" && req.method === "GET") {
+    const id = String(url.searchParams.get("id") || (link ? link.id : ""));
+    const allowed = site || (!!link && link.kind === "out" && link.id === id);
+    if (!allowed) return json({ errorCode: "forbidden", errorDescription: "Not allowed" }, 403, headers);
+    return json({ files: await linkFiles(id) }, 200, headers);
+  }
+  if (path === "/link/file" && req.method === "GET") {
+    const id = String(url.searchParams.get("id") || (link ? link.id : ""));
+    const allowed = site || (!!link && link.kind === "out" && link.id === id);
+    if (!allowed) return json({ errorCode: "forbidden", errorDescription: "Not allowed" }, 403, headers);
+    const dl = await linkFileLink(id, String(url.searchParams.get("path") || ""));
+    if (!dl) return json({ errorCode: "gone", errorDescription: "That file has expired" }, 410, headers);
+    return json({ url: dl }, 200, headers);
+  }
+  return null;
+}
 
 async function listPeople() {
   const seen = new Map<string, string>();
@@ -505,16 +663,29 @@ Deno.serve(async (req) => {
   // The function name is the first path segment; everything after it is ours.
   const path = url.pathname.replace(/^.*?\/gather-rtc/, "") || "/";
 
-  if (GATHER_PASSWORD) {
+  const siteAuthed = !GATHER_PASSWORD || req.headers.get("x-gather-key") === GATHER_PASSWORD;
+  // Share links carry their own password (see handleLink) and may use only the
+  // /link/* routes and the multipart /upload/* plumbing.
+  let linkAuth: { id: string; kind: string; label: string } | null = null;
+  if (GATHER_PASSWORD && !siteAuthed) {
     const key = req.headers.get("x-gather-key");
     const callsOnly = path === "/ice" || path.startsWith("/sessions/");
-    const ok = key === GATHER_PASSWORD || (callsOnly && ((!!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD) || (!!QUIZ_HOST_PASSWORD && key === QUIZ_HOST_PASSWORD)));
+    let ok = callsOnly && ((!!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD) || (!!QUIZ_HOST_PASSWORD && key === QUIZ_HOST_PASSWORD));
+    if (!ok && (path.startsWith("/link/") || path.startsWith("/upload/"))) {
+      linkAuth = await verifyLink(req.headers.get("x-gather-link"));
+      ok = !!linkAuth;
+    }
     if (!ok) return json({ errorCode: "unauthorized", errorDescription: "Wrong or missing password" }, 401, headers);
   }
 
   try {
     if (path === "/ice" && req.method === "GET") {
       return json({ iceServers: await iceServers() }, 200, headers);
+    }
+    if (path.startsWith("/link/")) {
+      const res = await handleLink(path, req, url, headers, { site: siteAuthed, link: linkAuth });
+      if (res) return res;
+      return json({ errorCode: "not_found", errorDescription: "No such route" }, 404, headers);
     }
     if (path.startsWith("/upload/")) {
       const res = await handleUpload(path, req, headers);

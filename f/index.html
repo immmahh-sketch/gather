@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gather — file link</title>
+<meta name="theme-color" content="#0f1412">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
+<link rel="apple-touch-icon" href="../assets/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="../assets/config.js"></script>
+<script src="../assets/upload.js"></script>
+</head>
+<body class="link-page">
+<main class="linkbox">
+  <div class="lb-brand"><svg class="mark" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e9e70"/><stop offset="1" stop-color="#0a6448"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><g fill="#fff" stroke="url(#g)" stroke-width="6.4" paint-order="stroke"><circle cx="32" cy="25" r="11"/><circle cx="22" cy="42" r="11"/><circle cx="42" cy="42" r="11"/></g></svg><span>Gather</span></div>
+
+  <!-- Password -->
+  <section class="lb-card" id="gate">
+    <h1>Private file link</h1>
+    <p class="lb-sub">Enter the password you were given.</p>
+    <form id="gateForm" autocomplete="off">
+      <input type="password" id="pw" placeholder="Password" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
+      <div class="lb-err" id="gateErr"></div>
+      <button class="btn primary big" id="gateGo" type="submit">Continue</button>
+    </form>
+  </section>
+
+  <!-- Send a file to the owner (kind "in") -->
+  <section class="lb-card hidden" id="sendCard">
+    <h1 id="sendTitle">Send a file</h1>
+    <p class="lb-sub" id="sendSub"></p>
+    <input class="lb-name" id="fromName" type="text" placeholder="Your name (so they know who it's from)" maxlength="30" autocomplete="name">
+    <label class="lb-drop" id="drop">
+      <input type="file" id="file" multiple hidden>
+      <span id="dropText">Choose files, or drop them here</span>
+    </label>
+    <ul class="lb-list" id="picked"></ul>
+    <button class="btn primary big" id="sendBtn" type="button" disabled>Send</button>
+    <div class="lb-status" id="sendStatus"></div>
+    <p class="lb-foot">Up to <span id="maxSize">50 MB</span> each. Files are private and kept for 7 days.</p>
+  </section>
+
+  <!-- Files waiting for the guest (kind "out") -->
+  <section class="lb-card hidden" id="getCard">
+    <h1 id="getTitle">Files for you</h1>
+    <p class="lb-sub" id="getSub"></p>
+    <ul class="lb-list" id="files"></ul>
+    <p class="lb-empty hidden" id="getEmpty">Nothing here yet. Check back later — the sender will let you know.</p>
+    <button class="btn" id="refresh" type="button">Refresh</button>
+  </section>
+
+  <div id="toast"></div>
+</main>
+
+<script>
+(() => {
+  'use strict';
+  const cfg = window.GATHER_CONFIG || {};
+  const RTC = cfg.RTC_ENDPOINT || '';
+  const $ = s => document.querySelector(s);
+  const id = (location.hash || '').replace(/^#/, '').trim().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40);
+  let pw = '';
+
+  let toastT = null;
+  function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3000); }
+
+  async function api(path, method, body, ms) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ms || 20000);
+    let r;
+    try {
+      r = await fetch(RTC + path, {
+        method,
+        headers: { 'content-type': 'application/json', apikey: cfg.SUPABASE_KEY, 'x-gather-link': id + ':' + pw },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: ctl.signal
+      });
+    } catch (e) { throw new Error(e && e.name === 'AbortError' ? 'The server took too long' : 'No connection'); }
+    finally { clearTimeout(timer); }
+    let data = null; try { data = await r.json(); } catch {}
+    if (r.status === 401) throw new Error('unauthorized');
+    if (!r.ok || !data || data.errorCode) throw new Error((data && data.errorDescription) || ('Something went wrong (' + r.status + ')'));
+    return data;
+  }
+
+  const fmtSize = n => n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : n >= 1048576 ? Math.round(n / 1048576) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B';
+  const fmtWhen = at => { const m = Math.round((Date.now() - at) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : new Date(at).toLocaleString(); };
+
+  if (!id) { $('#gate').innerHTML = '<h1>Broken link</h1><p class="lb-sub">This link is missing its code. Ask whoever sent it for the full link.</p>'; return; }
+
+  // ---- password ----
+  $('#gateForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const v = $('#pw').value;
+    if (!v) return;
+    const go = $('#gateGo'); go.disabled = true; $('#gateErr').textContent = '';
+    pw = v;
+    try {
+      const r = await api('/link/check', 'GET');
+      $('#gate').classList.add('hidden');
+      if (r.kind === 'in') openSend(r.label); else openGet(r.label);
+    } catch (err) {
+      pw = '';
+      go.disabled = false;
+      $('#gateErr').textContent = String(err.message) === 'unauthorized' ? 'That password is not right.' : 'Could not check the link. Try again.';
+    }
+  });
+
+  // ---- send to the owner (kind "in") ----
+  let files = [];
+  function openSend() {
+    $('#sendCard').classList.remove('hidden');
+    $('#sendSub').textContent = 'Pick a file and press Send. It goes straight to the person who sent you this link.';
+    window.GatherUpload.maxBytes(api).then(n => { $('#maxSize').textContent = window.GatherUpload.sizeLabel(n); }).catch(() => {});
+    const input = $('#file'), drop = $('#drop');
+    input.addEventListener('change', () => addFiles([...input.files]));
+    drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addFiles([...e.dataTransfer.files]); });
+    $('#sendBtn').addEventListener('click', doSend);
+  }
+  function addFiles(list) {
+    for (const f of list) if (!files.some(x => x.name === f.name && x.size === f.size)) files.push(f);
+    renderPicked();
+  }
+  function renderPicked() {
+    const ul = $('#picked'); ul.innerHTML = '';
+    files.forEach((f, i) => {
+      const li = document.createElement('li');
+      li.innerHTML = '<span class="lb-fn"></span><span class="lb-fs"></span><button class="lb-x" type="button" aria-label="Remove">✕</button>';
+      li.querySelector('.lb-fn').textContent = f.name;
+      li.querySelector('.lb-fs').textContent = fmtSize(f.size);
+      li.querySelector('.lb-x').addEventListener('click', () => { files.splice(i, 1); renderPicked(); });
+      ul.appendChild(li);
+    });
+    $('#sendBtn').disabled = !files.length;
+  }
+  async function doSend() {
+    if (!files.length) return;
+    const btn = $('#sendBtn'); btn.disabled = true;
+    const from = $('#fromName').value.trim().slice(0, 30);
+    const status = $('#sendStatus');
+    let done = 0;
+    try {
+      const max = await window.GatherUpload.maxBytes(api).catch(() => 50 * 1024 * 1024);
+      for (const f of files) {
+        if (f.size > max) { toast(f.name + ' is too big (max ' + window.GatherUpload.sizeLabel(max) + ')'); continue; }
+        status.textContent = 'Sending ' + f.name + '…';
+        const plan = await api('/link/upload', 'POST', { id, name: f.name, size: f.size, type: f.type, from });
+        await window.GatherUpload.send(plan, f, p => { status.textContent = 'Sending ' + f.name + '… ' + Math.round(p * 100) + '%'; }, api);
+        done++;
+      }
+      files = []; renderPicked();
+      status.textContent = done ? '✓ Sent! You can send more if you like.' : '';
+      if (done) toast('Sent — thank you!');
+    } catch (err) {
+      status.textContent = 'Could not send: ' + err.message;
+    } finally { btn.disabled = !files.length; }
+  }
+
+  // ---- get files the owner left (kind "out") ----
+  function openGet() {
+    $('#getCard').classList.remove('hidden');
+    $('#getSub').textContent = 'Files shared with you. Tap to download. They are kept for 7 days.';
+    $('#refresh').addEventListener('click', loadFiles);
+    loadFiles();
+  }
+  async function loadFiles() {
+    const ul = $('#files'); const empty = $('#getEmpty');
+    try {
+      const { files: list } = await api('/link/files', 'GET');
+      ul.innerHTML = '';
+      empty.classList.toggle('hidden', !!list.length);
+      for (const f of list) {
+        const li = document.createElement('li');
+        li.innerHTML = '<div class="lb-meta"><span class="lb-fn"></span><span class="lb-fs"></span></div><a class="btn primary lb-get" target="_blank" rel="noopener">Download</a>';
+        li.querySelector('.lb-fn').textContent = f.name;
+        li.querySelector('.lb-fs').textContent = fmtSize(f.size) + ' · ' + fmtWhen(f.at);
+        const a = li.querySelector('.lb-get');
+        a.addEventListener('click', async e => {
+          if (a.dataset.url) return;
+          e.preventDefault();
+          a.textContent = '…';
+          try { const { url } = await api('/link/file?id=' + encodeURIComponent(id) + '&path=' + encodeURIComponent(f.path), 'GET'); a.href = url; a.dataset.url = '1'; a.textContent = 'Download'; window.open(url, '_blank', 'noopener'); }
+          catch { a.textContent = 'Download'; toast('That file could not be opened'); }
+        });
+        ul.appendChild(li);
+      }
+    } catch (err) { toast('Could not load files: ' + err.message); }
+  }
+})();
+</script>
+</body>
+</html>
