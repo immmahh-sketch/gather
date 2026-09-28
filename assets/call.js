@@ -41,6 +41,11 @@
   const canShare = !tvMode && !joinOnly;
   const noFiles = tvMode || joinOnly;
   if (tvMode) document.body.classList.add('tv');
+  // The quizmaster's second window, opened by Let's Quiz's "Launch the quiz call":
+  // everyone in a grid, and the quiz screen itself left out (the host is looking at
+  // it already, and pulling it back would cost a hotspot about 3 Mbps). The quiz
+  // screen finds the host's camera by the quizHost flag in presence.
+  const quizHost = !joinOnly && !tvMode && new URLSearchParams(location.search).get('quizhost') === '1';
 
   const ICON = {
     micOff: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
@@ -59,7 +64,7 @@
   // Layout: 'everyone' is the grid (or a shared screen with everyone beside it);
   // 'speaker' is the shared screen or whoever is talking, big, with the talker
   // and you beside it. The quiz page starts in speaker view.
-  const VIEW_KEY = 'gather.view.' + (joinOnly ? 'join' : 'call');
+  const VIEW_KEY = 'gather.view.' + (joinOnly ? 'join' : quizHost ? 'quizhost' : 'call');
   let view = joinOnly ? 'speaker' : 'everyone';
   try { const v = localStorage.getItem(VIEW_KEY); if (v === 'speaker' || v === 'everyone') view = v; } catch {}
   let speaker = null;       // tile id of the remote camera doing the talking
@@ -521,6 +526,7 @@
       const st = p.state;
       if (!st.sessionId) continue;
       if ((sfu.coolOff.get(st.sessionId) || 0) > now) continue;
+      if (quizHost && p.quiz) continue;
       for (const name of st.tracks) {
         const key = st.sessionId + '/' + name;
         wanted.set(key, {
@@ -776,6 +782,7 @@
       shareKind: local.shareKind,
       hand: local.hand,
       tv: tvMode, // TVs watch only, so nobody gives them a tile
+      quizHost: quizHost || undefined,
       // Whether TVs should show this share edge to edge with nothing else on screen.
       tvFull: !!(local.screen && local.tvFull)
     };
@@ -824,6 +831,7 @@
         hand: typeof meta.hand === 'number' ? meta.hand : null
       };
       if (meta.tv === true && !p.tv) { p.tv = true; removeTile(id + ':cam'); }
+      p.quiz = meta.quiz === true;
       if (prevSession && prevSession !== p.state.sessionId) resetPeerStreams(p);
       if (!wasSeen) toast(meta.quiz === true ? '🎉 The quiz screen is on' : p.tv ? 'A TV is watching' : p.state.name + ' joined' + (p.state.hand ? ' with a hand up' : ''));
       else if (p.state.hand && !prevHand) toast('✋ ' + p.state.name + ' raised a hand');

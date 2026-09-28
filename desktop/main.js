@@ -6,6 +6,8 @@
  *   - Let's Quiz Host (Windows): the quiz builder and host screen at
  *     https://letsquiz.uk. Its "Launch the quiz call" button shares this
  *     window and its sound into the quiz call with no picker: one click.
+ *     It also opens the Gather call (everyone's cameras, the host's own camera
+ *     and microphone) as a second app window.
  *
  * The site does the work. This wrapper adds what a browser tab can't:
  *   - its own screen picker (Electron has none built in), with an option to
@@ -24,7 +26,9 @@ const HOST = !!FLAGS.host;
 const QUIZ = !HOST && !!FLAGS.quiz;
 const NAME = HOST ? 'Let\'s Quiz Host' : QUIZ ? 'Let\'s Quiz' : 'Gather';
 const SITE = HOST ? 'https://letsquiz.uk' : 'https://gathercall.uk';
-const OWN = HOST ? [SITE, 'https://www.letsquiz.uk'] : [SITE];
+// The host app also runs the quizmaster's Gather window, so gathercall.uk counts as its own too.
+const OWN = HOST ? [SITE, 'https://www.letsquiz.uk', 'https://gathercall.uk'] : [SITE];
+const isGather = url => { try { return new URL(url).origin === 'https://gathercall.uk'; } catch { return false; } };
 const HOME = SITE + (HOST ? '/' : QUIZ ? '/quiz/' : '/');
 const QUIZ_HOST = 'https://gathercall.uk/?room=lets-quiz';
 const ICON = path.join(__dirname, HOST ? 'host-icon.ico' : QUIZ ? 'quiz-icon.ico' : 'icon.ico');
@@ -63,7 +67,10 @@ const WINDOW_OPTIONS = () => ({
 // normal browser. In the host app the builder opens the host screen as a new
 // tab, which becomes a second app window (put it on the TV or a second screen).
 function guard(wc, own) {
-  wc.setWindowOpenHandler(({ url }) => {
+  wc.setWindowOpenHandler(({ url, frameName }) => {
+    // Let's Quiz opens its call window empty first (so a second press finds it rather than reloading it).
+    if (HOST && frameName === 'lqQuizCall' && (url === 'about:blank' || isGather(url))) return { action: 'allow', overrideBrowserWindowOptions: Object.assign(WINDOW_OPTIONS(), { width: 1100, height: 760, title: 'Quiz call', backgroundColor: '#0f1412' }) };
+    if (HOST && isGather(url)) return { action: 'allow', overrideBrowserWindowOptions: Object.assign(WINDOW_OPTIONS(), { width: 1100, height: 760, title: 'Quiz call', backgroundColor: '#0f1412' }) };
     if (HOST && isOwn(url)) return { action: 'allow', overrideBrowserWindowOptions: Object.assign(WINDOW_OPTIONS(), { width: 1400, height: 860 }) };
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -144,6 +151,7 @@ app.whenReady().then(async () => {
     // The host app only ever shares itself: the quiz screen and its own sound
     // (music, sound effects), never the rest of the computer. No picker.
     if (HOST) {
+      if (isGather(request.securityOrigin)) return callback(null); // the call window never shares
       const frame = request.frame;
       if (!frame) return callback(null);
       return callback(request.audioRequested ? { video: frame, audio: frame } : { video: frame });
