@@ -667,6 +667,7 @@
       track.addEventListener('unmute', () => { track._mutedAt = 0; clearTimeout(track._gapT); const o = owner(); if (o) updatePeerTiles(o); });
     }
     refreshPeerTiles(p);
+    if (pl.media === 'audio') syncVoices(); // a voice starts playing as soon as it arrives
   }
 
   function onTrack(e) {
@@ -776,6 +777,31 @@
     tick(); timerIv = setInterval(tick, 1000);
   }
 
+  // ---------- everyone's voice ----------
+  // Each person's microphone plays from an audio element of its own, kept in one place for the whole call. Their
+  // camera tile is muted. A tile moves about whenever the layout changes (the stage follows whoever is talking), and a
+  // browser pauses a media element that is moved; a voice tied to its tile could fall silent after a few changes while
+  // the picture carried on (2 Oct 2026: the quizmaster lost a player's voice a few goes into a game). Players that stop
+  // anyway are started again every 2 seconds.
+  const voices = new Map(); // peerId -> <audio>
+  let voiceBox = null;
+  function syncVoices() {
+    if (!voiceBox) { voiceBox = document.createElement('div'); voiceBox.hidden = true; voiceBox.id = 'voices'; document.body.appendChild(voiceBox); }
+    for (const p of peers.values()) {
+      const hasMic = p.camStream.getAudioTracks().length > 0;
+      let a = voices.get(p.id);
+      if (!hasMic) { if (a) { a.srcObject = null; a.remove(); voices.delete(p.id); } continue; }
+      if (!a) { a = document.createElement('audio'); a.autoplay = true; a.setAttribute('playsinline', ''); voiceBox.appendChild(a); voices.set(p.id, a); }
+      if (a.srcObject !== p.camStream) a.srcObject = p.camStream;
+      a.muted = isHere(p); // a TV doesn't play whoever is watching it (see below)
+      if (a.paused && !a.muted) a.play().catch(() => {});
+    }
+    for (const [id, a] of voices) if (!peers.has(id)) { a.srcObject = null; a.remove(); voices.delete(id); }
+  }
+  setInterval(syncVoices, 2000);
+  // the first tap or key anywhere lets the browser play sound, if it was holding back
+  ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => { for (const a of voices.values()) if (a.paused && !a.muted) a.play().catch(() => {}); }));
+
   // ---------- TV: who is watching here ----------
   // A TV plays everyone on the call. Someone watching it who is also on the call from their own phone (Let's Quiz's
   // /play, or Gather) would hear their own voice come back out of the TV, a moment late. So the TV asks who is in the
@@ -784,10 +810,7 @@
   let hereNames = new Set(), hereBox = null, hereCloseT = 0, hereAsked = false;
   try { hereNames = new Set(JSON.parse(localStorage.getItem('gather.tvhere') || '[]')); } catch {}
   const isHere = p => tvMode && !!p && hereNames.has(normName(p.state.name));
-  function applyHere() {
-    if (!tvMode) return;
-    for (const p of peers.values()) { const t = tiles.get(p.id + ':cam'); if (t) t.video.muted = isHere(p); }
-  }
+  function applyHere() { if (tvMode) syncVoices(); }
   // Everyone the TV could be playing: people with a microphone on the call (not TVs, not the quiz screen), one per name.
   const callers = () => [...new Map([...peers.values()].filter(p => p.seen && !p.tv && !p.quiz && p.state.tracks.includes('mic')).map(p => [normName(p.state.name), p.state.name])).entries()];
   function openHere(auto) {
@@ -915,7 +938,7 @@
       updatePeerTiles(p);
     }
     for (const [id, p] of peers) if (p.seen && !state[id]) removePeer(id, true);
-    applyHere(); maybeAskHere();
+    syncVoices(); maybeAskHere();
     render();
     syncPulls();
   }
@@ -1002,7 +1025,7 @@
       t.stream = stream;
       t.video.srcObject = stream;
     }
-    if (tvMode && p && kind === 'cam') t.video.muted = isHere(p); // someone watching this TV: not played here
+    if (p && kind === 'cam') t.video.muted = true; // the voice plays from its own player (syncVoices), not the tile
     if (stream) { t.video.play().catch(() => {}); watchAudio(id, stream, t.el); }
     return t;
   }
