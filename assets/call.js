@@ -39,7 +39,7 @@
   // photos and videos instead, so the share button shows everywhere except TVs.
   const canScreen = !tvMode && !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
   const canShare = !tvMode && !joinOnly;
-  const noFiles = tvMode || joinOnly;
+  const noFiles = tvMode || joinOnly || !!window.GATHER_PASS_ONLY; // a call pass (the quizmaster's window) opens calls only
   if (tvMode) document.body.classList.add('tv');
   // The quizmaster's second window, opened by Let's Quiz's "Launch the quiz call":
   // everyone in a grid, and the quiz screen itself left out (the host is looking at
@@ -825,19 +825,24 @@
   const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   let hereNames = new Set(), hereBox = null, hereCloseT = 0, hereAsked = false;
   try { hereNames = new Set(JSON.parse(localStorage.getItem('gather.tvhere') || '[]')); } catch {}
-  const isHere = p => tvMode && !!p && hereNames.has(normName(p.state.name));
-  function applyHere() { if (tvMode) syncVoices(); }
+  // Every device, not just TVs: a laptop in the Let's Quiz app next to the player's own phone (on the call from /play)
+  // would play that phone's voice back to them too. The 🎧 In the room button opens the same choice there.
+  const isHere = p => !!p && hereNames.has(normName(p.state.name));
+  function applyHere() { syncVoices(); hereBtnState(); }
+  function hereBtnState() { const b = document.getElementById('hereBtn'); if (b) { b.classList.toggle('on', hereNames.size > 0); b.setAttribute('aria-pressed', hereNames.size > 0 ? 'true' : 'false'); } }
   // Everyone the TV could be playing: people with a microphone on the call (not TVs, not the quiz screen), one per name.
   const callers = () => [...new Map([...peers.values()].filter(p => p.seen && !p.tv && !p.quiz && p.state.tracks.includes('mic')).map(p => [normName(p.state.name), p.state.name])).entries()];
   function openHere(auto) {
-    if (!tvMode || !joined) return;
+    if (!joined) return;
     const list = callers();
     if (!list.length) { if (!auto) toast('Nobody on the call has a microphone yet'); return; }
     closeHere();
     hereBox = document.createElement('div');
     hereBox.className = 'tvhere';
-    hereBox.innerHTML = '<div class="tvhere-card"><h2>Who\u2019s watching this TV?</h2>' +
-      '<p>Tick anyone here who is on the call from their phone: this TV won\u2019t play their voice back to them.</p>' +
+    hereBox.innerHTML = (tvMode ? '<div class="tvhere-card"><h2>Who\u2019s watching this TV?</h2>' +
+      '<p>Tick anyone here who is on the call from their phone: this TV won\u2019t play their voice back to them.</p>' :
+      '<div class="tvhere-card"><h2>Who\u2019s in the room with you?</h2>' +
+      '<p>Tick anyone you can already hear in the room, like your own phone on the call. This device won\u2019t play their voice, so nobody hears themselves. Everyone else still hears them.</p>') +
       '<div class="tvhere-list"></div><button type="button" class="tvhere-done">Done</button></div>';
     const box = hereBox.querySelector('.tvhere-list');
     for (const [k, name] of list) {
@@ -1234,6 +1239,7 @@
   el.camBtn.addEventListener('click', () => setCam(!local.camOn));
   el.leaveBtn.addEventListener('click', leave);
   el.handBtn.addEventListener('click', () => setHand(!local.hand));
+  { const hb = document.getElementById('hereBtn'); if (hb) hb.addEventListener('click', () => { if (hereBox) closeHere(); else openHere(false); }); hereBtnState(); }
   el.rejoinBtn.addEventListener('click', () => location.reload());
   el.linkBtn.addEventListener('click', shareLink);
   el.shareBtn.addEventListener('click', onShareClick);
