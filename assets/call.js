@@ -796,13 +796,27 @@
       const mic = p.camStream.getAudioTracks()[0];
       if (!a.srcObject || a.srcObject.getAudioTracks()[0] !== mic) a.srcObject = new MediaStream([mic]);
       a.muted = isHere(p); // a TV doesn't play whoever is watching it (see below)
-      if (a.paused && !a.muted) a.play().catch(() => {});
+      if (a.paused && !a.muted) playVoice(a);
     }
     for (const [id, a] of voices) if (!peers.has(id)) { a.srcObject = null; a.remove(); voices.delete(id); }
   }
   setInterval(syncVoices, 2000);
-  // the first tap or key anywhere lets the browser play sound, if it was holding back
-  ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => { for (const a of voices.values()) if (a.paused && !a.muted) a.play().catch(() => {}); }));
+  // A browser may refuse to play sound until the page has been clicked (a window just opened or reloaded). That must
+  // never be a silent call: a banner says so, and any click or key starts every voice.
+  function playVoice(a) {
+    a.play().then(() => soundBlocked(false)).catch(e => { if (e && e.name === 'NotAllowedError') soundBlocked(true); });
+  }
+  function soundBlocked(on) {
+    let b = document.getElementById('soundBlocked');
+    if (on && !b) {
+      b = document.createElement('button');
+      b.id = 'soundBlocked'; b.type = 'button'; b.className = 'soundblocked';
+      b.textContent = '🔇 Sound is off in this window. Click here to hear everyone';
+      b.addEventListener('click', () => { for (const a of voices.values()) if (!a.muted) playVoice(a); });
+      document.body.appendChild(b);
+    } else if (!on && b && [...voices.values()].every(a => a.muted || !a.paused)) b.remove();
+  }
+  ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => { for (const a of voices.values()) if (a.paused && !a.muted) playVoice(a); }));
 
   // ---------- TV: who is watching here ----------
   // A TV plays everyone on the call. Someone watching it who is also on the call from their own phone (Let's Quiz's

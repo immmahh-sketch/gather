@@ -499,4 +499,6 @@ body.tv .tile .fs { display: none; }
 .tvhere-who .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tvhere-done { width: 100%; padding: 18px; font-size: 26px; font-weight: 700; background: #12805f; color: #fff; }
 .tvhere-foot { margin-top: 14px; color: #6f7874; font-size: 17px; }
+/* the browser is holding back sound in this window (call.js soundBlocked): one click starts every voice */
+.soundblocked { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 70; border: 0; border-radius: 999px; padding: 12px 22px; font: inherit; font-weight: 700; font-size: 17px; background: #e8a33d; color: #1a1306; box-shadow: 0 8px 30px rgba(0,0,0,.45); cursor: pointer; }
 
