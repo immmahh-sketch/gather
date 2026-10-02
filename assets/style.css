@@ -525,4 +525,7 @@ body.tv .tvhere-tip { font-size: 24px; padding: 16px 28px; }
 .ctl.pttbtn:hover { background: #378266; }
 .ctl.pttbtn.on { background: #c0263e; }
 .ctl.pttbtn:disabled { background: #262f2a; }
+/* a narrow window: the call controls wrap onto a second row rather than spill off both edges (centred flex overflows
+   to the left too, where nothing can scroll to it) */
+.controls { flex-wrap: wrap; row-gap: 8px; }
 

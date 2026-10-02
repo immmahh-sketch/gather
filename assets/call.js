@@ -215,8 +215,9 @@
       pttBtn = document.createElement('button');
       pttBtn.type = 'button'; pttBtn.id = 'pttBtn'; pttBtn.className = 'ctl pttbtn';
       pttBtn.title = 'Hold to talk, or click to leave your mic on (click again to stop). The T key does the same, here or on the quiz screen.';
-      const bar = document.querySelector('.controls'), leaveB = document.getElementById('leaveBtn');
-      if (bar) bar.insertBefore(pttBtn, leaveB || null);
+      // first in the bar, where it can't be the one squeezed off a narrow window
+      const bar = document.querySelector('.controls');
+      if (bar) bar.insertBefore(pttBtn, bar.firstChild);
       pttBtn.addEventListener('pointerdown', e => { e.preventDefault(); pttPointer = e.pointerId; try { pttBtn.setPointerCapture(e.pointerId); } catch {} pttDown(); });
       pttBtn.addEventListener('pointerup', e => { if (e.pointerId === pttPointer) { pttPointer = null; pttUp(); } });
       pttBtn.addEventListener('pointercancel', e => { if (e.pointerId === pttPointer) { pttPointer = null; if (!pttLatched) hostPtt(false); } });
