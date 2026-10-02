@@ -836,10 +836,9 @@
     closeHere();
     hereBox = document.createElement('div');
     hereBox.className = 'tvhere';
-    hereBox.innerHTML = '<div class="tvhere-card"><h2>Who\u2019s watching on this TV?</h2>' +
-      '<p>Pick everyone in this room who is on the call from their own phone. This TV won\u2019t play their voice, so they don\u2019t hear themselves. Everyone else still hears them.</p>' +
-      '<div class="tvhere-list"></div><button type="button" class="tvhere-done">Done</button>' +
-      '<div class="tvhere-foot">Press OK on the remote any time to change this.</div></div>';
+    hereBox.innerHTML = '<div class="tvhere-card"><h2>Who\u2019s watching this TV?</h2>' +
+      '<p>Tick anyone here who is on the call from their phone: this TV won\u2019t play their voice back to them.</p>' +
+      '<div class="tvhere-list"></div><button type="button" class="tvhere-done">Done</button></div>';
     const box = hereBox.querySelector('.tvhere-list');
     for (const [k, name] of list) {
       const b = document.createElement('button');
@@ -862,10 +861,19 @@
     });
     document.body.appendChild(hereBox);
     box.firstChild.focus();
-    armHereClose();
+    armHereClose(); hereHint();
   }
   function armHereClose() { clearTimeout(hereCloseT); hereCloseT = setTimeout(closeHere, 45000); } // left alone, it gets out of the way
-  function closeHere() { clearTimeout(hereCloseT); if (hereBox) { hereBox.remove(); hereBox = null; } }
+  function closeHere() { clearTimeout(hereCloseT); if (hereBox) { hereBox.remove(); hereBox = null; } hereHint(); }
+  // Never pops up by itself (it could cover a game's code or QR code before people have joined): a small chip in the
+  // corner offers it while people with microphones are on the call and nobody on this TV has been picked yet.
+  function hereHint() {
+    if (!tvMode) return;
+    let h = document.getElementById('tvhereHint');
+    const want = joined && !hereBox && !hereNames.size && callers().length > 0;
+    if (want && !h) { h = document.createElement('div'); h.id = 'tvhereHint'; h.className = 'tvhere-hint'; h.textContent = '\u{1F3A7} Watching here? Press OK'; document.body.appendChild(h); }
+    else if (!want && h) h.remove();
+  }
   // The remote: OK opens the question; in it, the arrows move between the buttons (OK presses one).
   if (tvMode) document.addEventListener('keydown', e => {
     if (!joined) return;
@@ -877,12 +885,8 @@
       btns[(Math.max(0, i) + step + btns.length) % btns.length].focus();
     }
   });
-  // The first time people with microphones are on the call, ask once (a TV that already knows who is here doesn't).
-  function maybeAskHere() {
-    if (!tvMode || hereAsked || hereNames.size || !callers().length) return;
-    hereAsked = true;
-    setTimeout(() => { if (!hereBox && callers().length) openHere(true); }, 4000);
-  }
+  // People with microphones on the call: the chip appears (or goes, once someone here is picked).
+  function maybeAskHere() { hereHint(); }
 
   // ---------- presence (Supabase Realtime) ----------
   function presencePayload() {
