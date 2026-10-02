@@ -824,7 +824,8 @@
   // room with it and never plays their sound; everyone else on the call still hears them. Remembered on this TV by name.
   const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   let hereNames = new Set(), hereBox = null, hereCloseT = 0, hereAsked = false;
-  try { hereNames = new Set(JSON.parse(localStorage.getItem('gather.tvhere') || '[]')); } catch {}
+  // A fresh choice each time the app is loaded: the question is asked again (user's rule, 2 Oct 2026), nobody pre-ticked.
+  try { localStorage.removeItem('gather.tvhere'); } catch {}
   // Every device, not just TVs: a laptop in the Let's Quiz app next to the player's own phone (on the call from /play)
   // would play that phone's voice back to them too. The 🎧 In the room button opens the same choice there.
   const isHere = p => !!p && hereNames.has(normName(p.state.name));
@@ -834,13 +835,14 @@
   const callers = () => [...new Map([...peers.values()].filter(p => p.seen && !p.tv && !p.quiz && p.state.tracks.includes('mic')).map(p => [normName(p.state.name), p.state.name])).entries()];
   function openHere(auto) {
     if (!joined) return;
+    { const tip = document.getElementById('tvhereTip'); if (tip) tip.remove(); }
     const list = callers();
     if (!list.length) { if (!auto) toast('Nobody on the call has a microphone yet'); return; }
     closeHere();
     hereBox = document.createElement('div');
     hereBox.className = 'tvhere';
     hereBox.innerHTML = (tvMode ? '<div class="tvhere-card"><h2>Who\u2019s watching this TV?</h2>' +
-      '<p>Tick anyone here who is on the call from their phone: this TV won\u2019t play their voice back to them.</p>' :
+      '<p>Is anyone in this room also on the call from their own phone? Tick them, and this TV won\u2019t play their voice, so they don\u2019t hear themselves echo back a moment later. Everyone else on the call still hears them. Nobody here? Just press Done.</p>' :
       '<div class="tvhere-card"><h2>Who\u2019s in the room with you?</h2>' +
       '<p>Tick anyone you can already hear in the room, like your own phone on the call. This device won\u2019t play their voice, so nobody hears themselves. Everyone else still hears them.</p>') +
       '<div class="tvhere-list"></div><button type="button" class="tvhere-done">Done</button></div>';
@@ -861,8 +863,7 @@
     }
     hereBox.querySelector('.tvhere-done').addEventListener('click', () => {
       closeHere();
-      const n = list.filter(([k]) => hereNames.has(k)).length;
-      toast(n ? 'This TV won\u2019t play ' + (n === 1 ? 'that voice' : 'those ' + n + ' voices') : 'This TV plays everyone');
+      hereTip(tvMode ? 'Press the middle button on your Fire TV remote to change this later' : 'Press Ctrl + S to change this later');
     });
     document.body.appendChild(hereBox);
     box.firstChild.focus();
@@ -873,6 +874,8 @@
   // Never pops up by itself (it could cover a game's code or QR code before people have joined): a small chip in the
   // corner offers it while people with microphones are on the call and nobody on this TV has been picked yet.
   function hereHint() {
+    const old = document.getElementById('tvhereHint'); if (old) old.remove();
+    return; // (retired 2 Oct 2026: it sat on screen through the game; the question now comes once per load)
     if (!tvMode) return;
     let h = document.getElementById('tvhereHint');
     // always on screen while there are callers, so the picker can always be found: who is muted here, or the offer
@@ -894,7 +897,25 @@
     }
   });
   // People with microphones on the call: the chip appears (or goes, once someone here is picked).
-  function maybeAskHere() { hereHint(); }
+  function maybeAskHere() {
+    if (hereAsked || !joined || !callers().length) return;
+    hereAsked = true;
+    setTimeout(() => { if (!hereBox && callers().length) openHere(true); }, 2500);
+  }
+  // How to change it later: a note for 5 seconds after Done.
+  function hereTip(text) {
+    let t = document.getElementById('tvhereTip'); if (t) t.remove();
+    t = document.createElement('div'); t.id = 'tvhereTip'; t.className = 'tvhere-tip'; t.textContent = text;
+    document.body.appendChild(t);
+    setTimeout(() => t.classList.add('gone'), 5000);
+    setTimeout(() => t.remove(), 5600);
+  }
+  // Ctrl + S (or Cmd + S on a Mac) opens and closes it on a computer, rather than saving the page.
+  if (!tvMode) document.addEventListener('keydown', e => {
+    if (!joined || !(e.ctrlKey || e.metaKey) || e.altKey || (e.key !== 's' && e.key !== 'S')) return;
+    e.preventDefault();
+    if (hereBox) closeHere(); else openHere(false);
+  });
 
   // ---------- presence (Supabase Realtime) ----------
   function presencePayload() {

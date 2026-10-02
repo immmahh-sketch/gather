@@ -20,7 +20,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../assets/style.css?v=20261002i">
+<link rel="stylesheet" href="../assets/style.css?v=20261002j">
 <script>
   // Join-only: this page always joins the quiz room. There is no room in the
   // address to change, and sharing and files are switched off. It also has its
@@ -34,8 +34,8 @@
     soonText: 'Come back on Friday 2nd October at 7pm!'
   };
 </script>
-<script src="../assets/config.js?v=20261002i"></script>
-<script src="../assets/gate.js?v=20261002i"></script>
+<script src="../assets/config.js?v=20261002j"></script>
+<script src="../assets/gate.js?v=20261002j"></script>
 </head>
 <body class="call-page">
 <div id="loading" class="screen"><p>Loading…</p></div>
@@ -51,7 +51,7 @@
       doc.querySelectorAll('script').forEach(s => s.remove());
       box.remove();
       document.body.insertAdjacentHTML('afterbegin', doc.body.innerHTML);
-      const scripts = ['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js', '../assets/ui.js?v=20261002i', '../assets/upload.js?v=20261002i', '../assets/call.js?v=20261002i'];
+      const scripts = ['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js', '../assets/ui.js?v=20261002j', '../assets/upload.js?v=20261002j', '../assets/call.js?v=20261002j'];
       for (const src of scripts) {
         await new Promise((resolve, reject) => {
           const s = document.createElement('script');
