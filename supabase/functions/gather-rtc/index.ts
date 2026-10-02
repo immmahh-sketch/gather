@@ -39,7 +39,8 @@
 //   GATHER_PASSWORD                    the site password
 //   GATHER_QUIZ_PASSWORD               the quiz night page's password (calls only)
 //   QUIZ_HOST_PASSWORD                 Let's Quiz host password (set for quiz-api; calls only,
-//                                      so the quiz host screen can join the call from letsquiz.uk)
+//                                      so the quiz host screen can join the call from letsquiz.uk;
+//                                      it also signs the passes players' phones join with, quizPassOk)
 // Deploy with `npx.cmd supabase functions deploy gather-rtc --no-verify-jwt`.
 
 const SFU_APP_ID = Deno.env.get("CF_SFU_APP_ID") || "";
@@ -547,6 +548,16 @@ async function hmac(key: Uint8Array, msg: string) {
   const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", k, te.encode(msg)));
 }
+// A Let's Quiz player's phone (live-quiz assets/phonecam.js). The quiz host screen, while it is on the call, hands the
+// phones in its game a pass "qt.<expiry ms>.<hex HMAC-SHA256(host password, 'quizcall:' + expiry)>". It opens the call
+// routes only (no files, no people), and only until it expires: 13 hours at most from now.
+async function quizPassOk(key: string | null) {
+  if (!QUIZ_HOST_PASSWORD || !key || !key.startsWith("qt.")) return false;
+  const [, exp, sig] = key.split(".");
+  const ms = Number(exp);
+  if (!/^\d{13}$/.test(exp || "") || !(ms > Date.now()) || ms - Date.now() > 13 * 3600e3 || !/^[0-9a-f]{64}$/.test(sig || "")) return false;
+  return bytesHex(await hmac(te.encode(QUIZ_HOST_PASSWORD), "quizcall:" + exp)) === sig;
+}
 // RFC 3986 encoding, the way S3 signatures expect it.
 const s3enc = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 
@@ -670,7 +681,7 @@ Deno.serve(async (req) => {
   if (GATHER_PASSWORD && !siteAuthed) {
     const key = req.headers.get("x-gather-key");
     const callsOnly = path === "/ice" || path.startsWith("/sessions/");
-    let ok = callsOnly && ((!!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD) || (!!QUIZ_HOST_PASSWORD && key === QUIZ_HOST_PASSWORD));
+    let ok = callsOnly && ((!!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD) || (!!QUIZ_HOST_PASSWORD && key === QUIZ_HOST_PASSWORD) || await quizPassOk(key));
     if (!ok && (path.startsWith("/link/") || path.startsWith("/upload/"))) {
       linkAuth = await verifyLink(req.headers.get("x-gather-link"));
       ok = !!linkAuth;
