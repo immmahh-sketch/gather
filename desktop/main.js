@@ -154,7 +154,9 @@ app.whenReady().then(async () => {
       if (isGather(request.securityOrigin)) return callback(null); // the call window never shares
       const frame = request.frame;
       if (!frame) return callback(null);
-      return callback(request.audioRequested ? { video: frame, audio: frame } : { video: frame });
+      // enableLocalEcho: the quiz's sound (music, clips) still plays on this computer while it goes into the call;
+      // without it the quizmaster heard nothing of their own quiz.
+      return callback(request.audioRequested ? { video: frame, audio: frame, enableLocalEcho: true } : { video: frame });
     }
     pickSource(request.audioRequested).then(choice => {
       if (!choice) return callback(null); // closed or cancelled: the page carries on without sharing

@@ -199,7 +199,26 @@
     updateLocalTile();
   }
 
-  function setMic(on) { local.micOn = on; if (local.audio) local.audio.enabled = on; applyMediaButtons(); updatePresence(); }
+  // ---------- the quizmaster's push to talk ----------
+  // In the quizmaster's window (quizhost=1) the microphone is held to talk from the Let's Quiz host screen: its
+  // "Hold to talk" button (or the T key) sends {lq: 'ptt', on} here. The quiz plays its music out loud on that
+  // computer, so an open mic would send the music round again. Only the mic track is switched: the member list entry
+  // is left alone (re-posting it on every press got a player dropped from the call, 2 Oct 2026).
+  let pttBanner = null;
+  function hostPtt(on) {
+    if (!quizHost) return;
+    if (local.audio) local.audio.enabled = !!on && local.micOn;
+    if (!pttBanner) { pttBanner = document.createElement('div'); pttBanner.className = 'pttbanner'; document.body.appendChild(pttBanner); }
+    pttBanner.classList.toggle('on', !!on && local.micOn);
+    pttBanner.textContent = !local.micOn ? '\u{1F507} Your mic is off here' : on ? '\u{1F399}\uFE0F Talking: everyone can hear you' : '\u{1F3A4} Hold to talk on the quiz screen (or hold T there)';
+  }
+  window.addEventListener('message', e => {
+    if (!quizHost || !/^https:\/\/(www\.)?letsquiz\.uk$|^http:\/\/localhost:8787$/.test(e.origin)) return;
+    const d = e.data || {};
+    if (d.lq === 'ptt') hostPtt(!!d.on);
+  });
+
+  function setMic(on) { local.micOn = on; if (local.audio) local.audio.enabled = on && !quizHost; applyMediaButtons(); updatePresence(); if (quizHost) hostPtt(false); }
   function setCam(on) { local.camOn = on; if (local.video) local.video.enabled = on; applyMediaButtons(); updatePresence(); }
 
   // ---------- quiz night doors (join-only page) ----------
@@ -737,6 +756,7 @@
     }
     el.prejoin.classList.add('hidden');
     el.call.classList.remove('hidden');
+    if (quizHost) hostPtt(false); // the quizmaster talks with push to talk on the quiz screen (see hostPtt)
     if (!tvMode) addLocalTile(); // a TV has nothing to show of itself
     applyMediaButtons();
     startTimer();
