@@ -200,22 +200,44 @@
   }
 
   // ---------- the quizmaster's push to talk ----------
-  // In the quizmaster's window (quizhost=1) the microphone is held to talk from the Let's Quiz host screen: its
-  // "Hold to talk" button (or the T key) sends {lq: 'ptt', on} here. The quiz plays its music out loud on that
-  // computer, so an open mic would send the music round again. Only the mic track is switched: the member list entry
-  // is left alone (re-posting it on every press got a player dropped from the call, 2 Oct 2026).
-  let pttBanner = null;
-  function hostPtt(on) {
+  // In the quizmaster's window (quizhost=1) the microphone is held to talk, from a button in this window's controls
+  // (and the T key): hold to talk, or tap to leave it on until tapped again. The quiz plays its music out loud on that
+  // computer, so an open mic would send the music round again. T on the Let's Quiz host screen is passed on here
+  // ({lq: 'ptt', act: 'down' | 'up'}), so this window keeps the one state. Only the mic track is switched: the member
+  // list entry is left alone (re-posting it on every press got a player dropped from the call, 2 Oct 2026).
+  const PTT_TAP_MS = 300;
+  let pttOn = false, pttLatched = false, pttDownAt = 0, pttWasLatched = false, pttBtn = null, pttPointer = null, pttKey = false;
+  function hostPtt(on, latched = false) {
     if (!quizHost) return;
-    if (local.audio) local.audio.enabled = !!on && local.micOn;
-    if (!pttBanner) { pttBanner = document.createElement('div'); pttBanner.className = 'pttbanner'; document.body.appendChild(pttBanner); }
-    pttBanner.classList.toggle('on', !!on && local.micOn);
-    pttBanner.textContent = !local.micOn ? '\u{1F507} Your mic is off here' : on ? '\u{1F399}\uFE0F Talking: everyone can hear you' : '\u{1F3A4} Hold to talk on the quiz screen (or hold T there)';
+    pttOn = !!on && local.micOn; pttLatched = pttOn && latched;
+    if (local.audio) local.audio.enabled = pttOn;
+    if (!pttBtn) {
+      pttBtn = document.createElement('button');
+      pttBtn.type = 'button'; pttBtn.id = 'pttBtn'; pttBtn.className = 'ctl pttbtn';
+      pttBtn.title = 'Hold to talk, or click to leave your mic on (click again to stop). The T key does the same, here or on the quiz screen.';
+      const bar = document.querySelector('.controls'), leaveB = document.getElementById('leaveBtn');
+      if (bar) bar.insertBefore(pttBtn, leaveB || null);
+      pttBtn.addEventListener('pointerdown', e => { e.preventDefault(); pttPointer = e.pointerId; try { pttBtn.setPointerCapture(e.pointerId); } catch {} pttDown(); });
+      pttBtn.addEventListener('pointerup', e => { if (e.pointerId === pttPointer) { pttPointer = null; pttUp(); } });
+      pttBtn.addEventListener('pointercancel', e => { if (e.pointerId === pttPointer) { pttPointer = null; if (!pttLatched) hostPtt(false); } });
+    }
+    pttBtn.classList.toggle('on', pttOn);
+    pttBtn.disabled = !local.micOn || !local.audio;
+    pttBtn.textContent = !local.audio ? 'No microphone' : !local.micOn ? '\u{1F507} Mic off' : pttLatched ? '\u{1F399}\uFE0F Mic on \u00b7 click to stop' : pttOn ? '\u{1F399}\uFE0F Talking\u2026' : '\u{1F3A4} Hold or click to talk';
+  }
+  // one press: down opens the mic (or, if it was left on, closes it); up closes it again unless it was a quick tap
+  function pttDown() { pttWasLatched = pttLatched; pttDownAt = Date.now(); hostPtt(!pttWasLatched); }
+  function pttUp() { if (pttWasLatched) return; if (Date.now() - pttDownAt < PTT_TAP_MS) hostPtt(true, true); else hostPtt(false); }
+  if (quizHost) {
+    document.addEventListener('keydown', e => { if ((e.key === 't' || e.key === 'T') && joined && !e.repeat && !pttKey && !e.ctrlKey && !e.metaKey && !(e.target.matches && e.target.matches('input, textarea'))) { e.preventDefault(); pttKey = true; pttDown(); } });
+    document.addEventListener('keyup', e => { if ((e.key === 't' || e.key === 'T') && pttKey) { pttKey = false; pttUp(); } });
+    window.addEventListener('blur', () => { if (pttKey) { pttKey = false; if (!pttLatched) hostPtt(false); } });
   }
   window.addEventListener('message', e => {
-    if (!quizHost || !/^https:\/\/(www\.)?letsquiz\.uk$|^http:\/\/localhost:8787$/.test(e.origin)) return;
+    if (!quizHost || !joined || !/^https:\/\/(www\.)?letsquiz\.uk$|^http:\/\/localhost:8787$/.test(e.origin)) return;
     const d = e.data || {};
-    if (d.lq === 'ptt') hostPtt(!!d.on);
+    if (d.lq !== 'ptt') return;
+    if (d.act === 'down') pttDown(); else if (d.act === 'up') pttUp(); else hostPtt(!!d.on);
   });
 
   function setMic(on) { local.micOn = on; if (local.audio) local.audio.enabled = on && !quizHost; applyMediaButtons(); updatePresence(); if (quizHost) hostPtt(false); }

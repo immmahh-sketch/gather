@@ -520,7 +520,9 @@ body.tv .tvhere-card p { font-size: 18px; }
 .tvhere-tip { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); z-index: 60; max-width: 86vw; padding: 12px 22px; border-radius: 999px; background: rgba(22, 28, 25, .95); border: 2px solid #3ddc84; color: #fff; font-size: 18px; font-weight: 700; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,.5); transition: opacity .5s; }
 .tvhere-tip.gone { opacity: 0; }
 body.tv .tvhere-tip { font-size: 24px; padding: 16px 28px; }
-/* the quizmaster's window: whether push to talk (on the quiz screen) has the mic open */
-.pttbanner { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 55; padding: 8px 16px; border-radius: 999px; background: rgba(22, 28, 25, .92); border: 2px solid #2a332e; color: #cfd6d2; font-weight: 700; font-size: 14px; pointer-events: none; }
-.pttbanner.on { background: #c0263e; border-color: #e85a6e; color: #fff; }
+/* the quizmaster's push to talk (call.js hostPtt): a wide button in the call controls; held, never just tapped through */
+.ctl.pttbtn { width: auto; border-radius: 999px; padding: 0 22px; font-weight: 800; font-size: 15px; white-space: nowrap; background: #2f6f57; touch-action: none; user-select: none; -webkit-user-select: none; }
+.ctl.pttbtn:hover { background: #378266; }
+.ctl.pttbtn.on { background: #c0263e; }
+.ctl.pttbtn:disabled { background: #262f2a; }
 
