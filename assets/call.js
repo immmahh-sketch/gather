@@ -792,7 +792,9 @@
       let a = voices.get(p.id);
       if (!hasMic) { if (a) { a.srcObject = null; a.remove(); voices.delete(p.id); } continue; }
       if (!a) { a = document.createElement('audio'); a.autoplay = true; a.setAttribute('playsinline', ''); voiceBox.appendChild(a); voices.set(p.id, a); }
-      if (a.srcObject !== p.camStream) a.srcObject = p.camStream;
+      // sound only: given the whole stream, the player would decode the camera a second time (stutter on a busy machine)
+      const mic = p.camStream.getAudioTracks()[0];
+      if (!a.srcObject || a.srcObject.getAudioTracks()[0] !== mic) a.srcObject = new MediaStream([mic]);
       a.muted = isHere(p); // a TV doesn't play whoever is watching it (see below)
       if (a.paused && !a.muted) a.play().catch(() => {});
     }
