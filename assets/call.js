@@ -318,6 +318,9 @@
       el.preStatus.textContent = 'No microphone found, so others will not hear you.';
     }
     applyMediaButtons();
+    // The quizmaster's own window (opened by the quiz screen's 📞) goes straight into the call: no Join screen to miss,
+    // so its Hold or click to talk button is there at once (2 Oct 2026: the host sat on the Join screen, no button).
+    if (quizHost) { if (!el.nameInput.value.trim()) el.nameInput.value = 'Quizmaster'; join(); return; }
     if (isTouch && local.video && navigator.mediaDevices.enumerateDevices) {
       try {
         const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
