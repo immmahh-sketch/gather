@@ -97,8 +97,11 @@
     return 'hsl(' + (h % 360) + ' 55% 45%)';
   }
   function initial(name) { return (String(name).trim()[0] || '?').toUpperCase(); }
+  // A call's video goes quiet for a moment now and then (a still quiz screen sends no new frames; a phone's network
+  // hiccups). Its last picture stays up through a short gap; only a picture gone for longer gives way to the placeholder.
+  const VIDEO_GAP_MS = 4000;
   function videoLive(stream) {
-    return !!stream && stream.getVideoTracks().some(t => t.readyState === 'live' && !t.muted);
+    return !!stream && stream.getVideoTracks().some(t => t.readyState === 'live' && (!t.muted || (t._mutedAt && Date.now() - t._mutedAt < VIDEO_GAP_MS)));
   }
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -655,8 +658,13 @@
       // look up whoever owns the track now.
       track._gather = true;
       const owner = () => { for (const q of sfu.pulls.values()) if (q.track === track) return peers.get(q.peerId); return null; };
-      track.addEventListener('mute', () => { const o = owner(); if (o) updatePeerTiles(o); });
-      track.addEventListener('unmute', () => { const o = owner(); if (o) updatePeerTiles(o); });
+      // A pause is only shown as a lost picture once it has lasted VIDEO_GAP_MS (see videoLive).
+      track.addEventListener('mute', () => {
+        track._mutedAt = Date.now();
+        clearTimeout(track._gapT);
+        track._gapT = setTimeout(() => { const o = owner(); if (o) updatePeerTiles(o); }, VIDEO_GAP_MS + 100);
+      });
+      track.addEventListener('unmute', () => { track._mutedAt = 0; clearTimeout(track._gapT); const o = owner(); if (o) updatePeerTiles(o); });
     }
     refreshPeerTiles(p);
   }
@@ -768,6 +776,75 @@
     tick(); timerIv = setInterval(tick, 1000);
   }
 
+  // ---------- TV: who is watching here ----------
+  // A TV plays everyone on the call. Someone watching it who is also on the call from their own phone (Let's Quiz's
+  // /play, or Gather) would hear their own voice come back out of the TV, a moment late. So the TV asks who is in the
+  // room with it and never plays their sound; everyone else on the call still hears them. Remembered on this TV by name.
+  const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let hereNames = new Set(), hereBox = null, hereCloseT = 0, hereAsked = false;
+  try { hereNames = new Set(JSON.parse(localStorage.getItem('gather.tvhere') || '[]')); } catch {}
+  const isHere = p => tvMode && !!p && hereNames.has(normName(p.state.name));
+  function applyHere() {
+    if (!tvMode) return;
+    for (const p of peers.values()) { const t = tiles.get(p.id + ':cam'); if (t) t.video.muted = isHere(p); }
+  }
+  // Everyone the TV could be playing: people with a microphone on the call (not TVs, not the quiz screen), one per name.
+  const callers = () => [...new Map([...peers.values()].filter(p => p.seen && !p.tv && !p.quiz && p.state.tracks.includes('mic')).map(p => [normName(p.state.name), p.state.name])).entries()];
+  function openHere(auto) {
+    if (!tvMode || !joined) return;
+    const list = callers();
+    if (!list.length) { if (!auto) toast('Nobody on the call has a microphone yet'); return; }
+    closeHere();
+    hereBox = document.createElement('div');
+    hereBox.className = 'tvhere';
+    hereBox.innerHTML = '<div class="tvhere-card"><h2>Who\u2019s watching on this TV?</h2>' +
+      '<p>Pick everyone in this room who is on the call from their own phone. This TV won\u2019t play their voice, so they don\u2019t hear themselves. Everyone else still hears them.</p>' +
+      '<div class="tvhere-list"></div><button type="button" class="tvhere-done">Done</button>' +
+      '<div class="tvhere-foot">Press OK on the remote any time to change this.</div></div>';
+    const box = hereBox.querySelector('.tvhere-list');
+    for (const [k, name] of list) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tvhere-who' + (hereNames.has(k) ? ' on' : '');
+      b.innerHTML = '<span class="tick"></span><span class="nm"></span>';
+      b.querySelector('.nm').textContent = name;
+      b.addEventListener('click', () => {
+        if (hereNames.has(k)) hereNames.delete(k); else hereNames.add(k);
+        b.classList.toggle('on', hereNames.has(k));
+        try { localStorage.setItem('gather.tvhere', JSON.stringify([...hereNames])); } catch {}
+        applyHere(); armHereClose();
+      });
+      box.appendChild(b);
+    }
+    hereBox.querySelector('.tvhere-done').addEventListener('click', () => {
+      closeHere();
+      const n = list.filter(([k]) => hereNames.has(k)).length;
+      toast(n ? 'This TV won\u2019t play ' + (n === 1 ? 'that voice' : 'those ' + n + ' voices') : 'This TV plays everyone');
+    });
+    document.body.appendChild(hereBox);
+    box.firstChild.focus();
+    armHereClose();
+  }
+  function armHereClose() { clearTimeout(hereCloseT); hereCloseT = setTimeout(closeHere, 45000); } // left alone, it gets out of the way
+  function closeHere() { clearTimeout(hereCloseT); if (hereBox) { hereBox.remove(); hereBox = null; } }
+  // The remote: OK opens the question; in it, the arrows move between the buttons (OK presses one).
+  if (tvMode) document.addEventListener('keydown', e => {
+    if (!joined) return;
+    if (!hereBox) { if (e.key === 'Enter') { e.preventDefault(); openHere(false); } return; }
+    const btns = [...hereBox.querySelectorAll('button')], i = btns.indexOf(document.activeElement);
+    if (['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(e.key)) {
+      e.preventDefault();
+      const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1;
+      btns[(Math.max(0, i) + step + btns.length) % btns.length].focus();
+    }
+  });
+  // The first time people with microphones are on the call, ask once (a TV that already knows who is here doesn't).
+  function maybeAskHere() {
+    if (!tvMode || hereAsked || hereNames.size || !callers().length) return;
+    hereAsked = true;
+    setTimeout(() => { if (!hereBox && callers().length) openHere(true); }, 4000);
+  }
+
   // ---------- presence (Supabase Realtime) ----------
   function presencePayload() {
     return {
@@ -838,6 +915,7 @@
       updatePeerTiles(p);
     }
     for (const [id, p] of peers) if (p.seen && !state[id]) removePeer(id, true);
+    applyHere(); maybeAskHere();
     render();
     syncPulls();
   }
@@ -924,6 +1002,7 @@
       t.stream = stream;
       t.video.srcObject = stream;
     }
+    if (tvMode && p && kind === 'cam') t.video.muted = isHere(p); // someone watching this TV: not played here
     if (stream) { t.video.play().catch(() => {}); watchAudio(id, stream, t.el); }
     return t;
   }
