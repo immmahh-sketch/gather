@@ -870,9 +870,12 @@
   function hereHint() {
     if (!tvMode) return;
     let h = document.getElementById('tvhereHint');
-    const want = joined && !hereBox && !hereNames.size && callers().length > 0;
-    if (want && !h) { h = document.createElement('div'); h.id = 'tvhereHint'; h.className = 'tvhere-hint'; h.textContent = '\u{1F3A7} Watching here? Press OK'; document.body.appendChild(h); }
-    else if (!want && h) h.remove();
+    // always on screen while there are callers, so the picker can always be found: who is muted here, or the offer
+    const list = callers(), want = joined && !hereBox && list.length > 0;
+    if (!want) { if (h) h.remove(); return; }
+    if (!h) { h = document.createElement('div'); h.id = 'tvhereHint'; h.className = 'tvhere-hint'; document.body.appendChild(h); }
+    const muted = list.filter(([k]) => hereNames.has(k)).map(([, n]) => n);
+    h.textContent = muted.length ? '\u{1F3A7} Not playing here: ' + muted.join(', ') + ' \u00b7 OK to change' : '\u{1F3A7} Watching here? Press OK';
   }
   // The remote: OK opens the question; in it, the arrows move between the buttons (OK presses one).
   if (tvMode) document.addEventListener('keydown', e => {
