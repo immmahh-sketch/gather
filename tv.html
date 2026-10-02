@@ -9,9 +9,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css">
-<script src="assets/config.js"></script>
-<script src="assets/gate.js"></script>
+<link rel="stylesheet" href="assets/style.css?v=20261002b">
+<script src="assets/config.js?v=20261002b"></script>
+<script src="assets/gate.js?v=20261002b"></script>
 <style>
   body.tv-home { background: radial-gradient(1200px 700px at 50% -10%, rgba(18, 128, 95, .35), transparent 70%), #0f1412; color: #f2f4f3; min-height: 100vh; display: grid; place-items: center; padding: 40px; }
   .tv-card { width: 100%; max-width: 720px; text-align: center; }
@@ -73,7 +73,8 @@
     if (!room) return;
     recent = [room].concat(recent.filter(r => r !== room)).slice(0, 4);
     try { localStorage.setItem('gather.tvrooms', JSON.stringify(recent)); } catch {}
-    location.href = 'call.html?room=' + encodeURIComponent(room) + '&tv=1';
+    // a fresh address each time, so the TV never shows a page it kept from before an update
+    location.href = 'call.html?room=' + encodeURIComponent(room) + '&tv=1&t=' + Date.now().toString(36);
   }
   document.getElementById('form').addEventListener('submit', e => { e.preventDefault(); let v = input.value.trim(); try { const u = new URL(v.match(/^https?:\/\//) ? v : 'https://' + v); v = u.searchParams.get('room') || v; } catch {} go(v); });
   (window.GATHER_READY || Promise.resolve()).then(() => setTimeout(() => (recent.length ? document.getElementById('watch') : input).focus(), 100));
