@@ -264,6 +264,12 @@
     soon.innerHTML = '<div class="soon-card"><img src="/assets/icons/quiz-192.png" alt=""><h1></h1><p class="soon-when"></p><p class="soon-note"></p></div>';
     soon.querySelector('h1').textContent = JOIN.soonTitle || 'Coming soon!';
     soon.querySelector('.soon-when').textContent = JOIN.soonText || '';
+    // the quizmaster's own words, if they've set them (notice.html, or "Quiz call notice" in the desktop apps)
+    if (RTC) fetch(RTC + '/notice', { headers: authHeaders(), cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(d => {
+      const n = d && d.notice; if (!n || !n.text || !soon.isConnected) return;
+      if (n.title) soon.querySelector('h1').textContent = n.title;
+      soon.querySelector('.soon-when').textContent = n.text;
+    }).catch(() => {});
     const note = soon.querySelector('.soon-note');
     note.textContent = 'Checking whether the quiz is on…';
     document.body.appendChild(soon);

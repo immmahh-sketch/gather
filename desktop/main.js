@@ -89,6 +89,17 @@ function guard(wc, own) {
   });
 }
 
+// The quizmaster's editor for the quiz call page's "coming soon" notice (gathercall.uk/notice.html), in its own window.
+let noticeWin = null;
+function openNotice() {
+  if (noticeWin && !noticeWin.isDestroyed()) { noticeWin.focus(); return; }
+  noticeWin = new BrowserWindow(Object.assign(WINDOW_OPTIONS(), { width: 820, height: 900, title: 'Quiz call notice', backgroundColor: '#0f1412' }));
+  noticeWin.setMenuBarVisibility(false);
+  noticeWin.loadURL('https://gathercall.uk/notice.html');
+  guard(noticeWin.webContents, noticeWin);
+  noticeWin.on('closed', () => { noticeWin = null; });
+}
+
 function createWindow() {
   win = new BrowserWindow(WINDOW_OPTIONS());
   win.loadURL(HOME);
@@ -170,10 +181,12 @@ app.whenReady().then(async () => {
   const siteItems = HOST ? [
     { label: 'Quiz builder', accelerator: 'Alt+Home', click: () => win && win.loadURL(HOME) },
     { label: 'Open the quiz call page', click: () => shell.openExternal('https://gathercall.uk/quiz/') },
+    { label: 'Quiz call notice…', accelerator: 'CmdOrCtrl+Shift+N', click: openNotice },
     { type: 'separator' }
   ] : QUIZ ? [] : [
     { label: 'Home', accelerator: 'Alt+Home', click: () => win && win.loadURL(HOME) },
     { label: 'Quiz night (host)', click: () => win && win.loadURL(QUIZ_HOST) },
+    { label: 'Quiz call notice…', accelerator: 'CmdOrCtrl+Shift+N', click: openNotice },
     { type: 'separator' }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate([

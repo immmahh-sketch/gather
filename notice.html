@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Quiz call notice · Gather</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0f1412">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css?v=20261003a">
+<script src="assets/config.js?v=20261003a"></script>
+<script src="assets/gate.js?v=20261003a"></script>
+<style>
+  /* The quizmaster's editor for what the quiz call page says before the quiz starts (gathercall.uk/quiz). */
+  body.nt { background: #0f1412; color: #f2f4f3; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; margin: 0; min-height: 100vh; }
+  .nt-wrap { max-width: 760px; margin: 0 auto; padding: 24px 18px 40px; display: grid; gap: 18px; }
+  .nt-wrap h1 { margin: 0; font-size: 26px; }
+  .nt-wrap p.lead { margin: 0; color: #9aa39e; }
+  .nt-form { display: grid; gap: 12px; background: #182120; border: 1px solid #26332f; border-radius: 16px; padding: 16px; }
+  .nt-form label { display: grid; gap: 6px; font-weight: 700; font-size: 14px; }
+  .nt-form input { font: inherit; font-size: 17px; padding: 11px 12px; border-radius: 10px; border: 1px solid #33443f; background: #0f1412; color: #f2f4f3; }
+  .nt-quick { display: flex; flex-wrap: wrap; gap: 8px; }
+  .nt-quick button, .nt-actions button { font: inherit; font-weight: 700; border: 0; border-radius: 999px; padding: 9px 14px; cursor: pointer; background: #26332f; color: #f2f4f3; }
+  .nt-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+  .nt-actions .go { background: #1e9e70; color: #fff; padding: 11px 20px; }
+  .nt-msg { font-weight: 700; color: #9aa39e; margin-right: auto; }
+  .nt-msg.ok { color: #6fe3b0; } .nt-msg.bad { color: #ff8f8f; }
+  .nt-prev { position: relative; border-radius: 16px; overflow: hidden; border: 1px solid #26332f; }
+  .nt-prev .soon { position: static; min-height: 330px; }
+  .nt-tag { position: absolute; top: 10px; left: 12px; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #9aa39e; z-index: 2; }
+</style>
+</head>
+<body class="nt">
+<div class="nt-wrap">
+  <div><h1>📣 Quiz call notice</h1><p class="lead">What people see on the quiz call page (gathercall.uk/quiz and the Let's Quiz app) until the quiz starts. It changes for everyone straight away.</p></div>
+  <form class="nt-form" id="ntForm" autocomplete="off">
+    <label>Heading<input id="ntTitle" maxlength="80" placeholder="Let's Quiz coming soon!"></label>
+    <label>When to come back<input id="ntText" maxlength="200" placeholder="Come back on Friday 6th November at 7pm!"></label>
+    <div class="nt-quick" id="ntQuick"></div>
+    <div class="nt-actions"><span class="nt-msg" id="ntMsg">Loading the current notice…</span><button type="button" id="ntReset">Back to the default</button><button type="submit" class="go" id="ntSave">Save</button></div>
+  </form>
+  <div class="nt-prev"><span class="nt-tag">Preview</span><div class="soon"><div class="soon-card"><img src="assets/icons/quiz-192.png" alt=""><h1 id="pvTitle"></h1><p class="soon-when" id="pvText"></p><p class="soon-note">This page opens by itself when the quiz starts.</p></div></div></div>
+</div>
+<script>
+(() => {
+  'use strict';
+  const cfg = window.GATHER_CONFIG || {}, RTC = cfg.RTC_ENDPOINT || '';
+  const DEF_TITLE = "Let's Quiz coming soon!";
+  const $ = (id) => document.getElementById(id);
+  const title = $('ntTitle'), text = $('ntText'), msg = $('ntMsg');
+  const headers = () => ({ 'content-type': 'application/json', apikey: cfg.SUPABASE_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_KEY, 'x-gather-key': window.GATHER_KEY || '' });
+  const say = (t, cls) => { msg.textContent = t; msg.className = 'nt-msg ' + (cls || ''); };
+  const preview = () => { $('pvTitle').textContent = title.value.trim() || DEF_TITLE; $('pvText').textContent = text.value.trim() || 'Come back soon!'; };
+  // "Friday 6th November at 7pm" for the next few Fridays: one click fills it in
+  const nth = (d) => d + (d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th');
+  const fri = (k) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7) + 7 * k); return d; };
+  const words = (d) => `Come back on ${d.toLocaleDateString('en-GB', { weekday: 'long' })} ${nth(d.getDate())} ${d.toLocaleDateString('en-GB', { month: 'long' })} at 7pm!`;
+  $('ntQuick').innerHTML = [0, 1, 2, 3, 4, 5].map((k) => { const d = fri(k); return `<button type="button" data-t="${words(d)}">📅 ${d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</button>`; }).join('') + '<button type="button" data-t="The quiz is on tonight at 7pm. See you there!">🎉 Tonight</button>';
+  $('ntQuick').querySelectorAll('[data-t]').forEach((b) => b.onclick = () => { text.value = b.dataset.t; preview(); say('Not saved yet'); });
+  title.oninput = text.oninput = () => { preview(); say('Not saved yet'); };
+  $('ntReset').onclick = () => { title.value = DEF_TITLE; text.value = words(fri(0)); preview(); say('Not saved yet'); };
+  $('ntForm').onsubmit = async (e) => {
+    e.preventDefault();
+    if (!text.value.trim()) { say('Type when to come back first', 'bad'); text.focus(); return; }
+    $('ntSave').disabled = true; say('Saving…');
+    try {
+      const r = await fetch(RTC + '/notice', { method: 'POST', headers: headers(), body: JSON.stringify({ title: title.value.trim() || DEF_TITLE, text: text.value.trim() }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.errorDescription || 'Request failed (' + r.status + ')');
+      say('✓ Saved. Everyone sees it now.', 'ok');
+    } catch (err) { say("Didn't save: " + err.message, 'bad'); }
+    $('ntSave').disabled = false;
+  };
+  (window.GATHER_READY || Promise.resolve()).then(async () => {
+    try {
+      const r = await fetch(RTC + '/notice', { headers: headers(), cache: 'no-store' });
+      const n = (await r.json()).notice;
+      title.value = n?.title || DEF_TITLE; text.value = n?.text || '';
+      say(n ? `Showing now (saved ${new Date(n.at).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })})` : 'Nothing saved yet: the page shows its built-in wording until you save one.');
+    } catch { say("Couldn't load the current notice", 'bad'); }
+    preview();
+  });
+  preview();
+})();
+</script>
+</body>
+</html>

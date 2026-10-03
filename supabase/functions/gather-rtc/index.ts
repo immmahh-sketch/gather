@@ -444,6 +444,22 @@ async function freshInbox(key: string): Promise<FileRow[]> {
   return keep;
 }
 
+// ---- The quiz call's "coming soon" notice (the join-only quiz page) ----
+// Kept as one small JSON file in the bucket, under _settings (the file sweep only touches room and inbox folders).
+// Anyone may read it (it is what the waiting page says); only the quizmaster may change it.
+const NOTICE_PATH = "_settings/quiz-notice.json";
+async function readNotice(): Promise<{ title: string; text: string; at: string } | null> {
+  if (!SUPA_URL || !SERVICE_KEY) return null;
+  const r = await storage(`/object/${BUCKET}/${NOTICE_PATH}`, { method: "GET" });
+  if (!r.ok) return null;
+  try { const j = await r.json(); return j && typeof j.text === "string" ? j : null; } catch { return null; }
+}
+async function writeNotice(title: string, text: string) {
+  const body = JSON.stringify({ title, text, at: new Date().toISOString() });
+  const r = await storage(`/object/${BUCKET}/${NOTICE_PATH}`, { method: "POST", headers: { "x-upsert": "true", "cache-control": "no-cache" }, body });
+  if (!r.ok) throw new Error(`notice save -> ${r.status} ${await r.text()}`);
+}
+
 async function handlePeople(path: string, req: Request, url: URL, headers: Record<string, string>): Promise<Response | null> {
   if (!SUPA_URL || !SERVICE_KEY) return json({ errorCode: "not_configured", errorDescription: "Storage is not available" }, 503, headers);
   await ensureBucket();
@@ -675,6 +691,18 @@ Deno.serve(async (req) => {
   const path = url.pathname.replace(/^.*?\/gather-rtc/, "") || "/";
 
   const siteAuthed = !GATHER_PASSWORD || req.headers.get("x-gather-key") === GATHER_PASSWORD;
+  if (path === "/notice" && req.method === "GET") return json({ notice: await readNotice() }, 200, headers);
+  if (path === "/notice" && req.method === "POST") {
+    const key = req.headers.get("x-gather-key");
+    const host = siteAuthed || (!!QUIZ_HOST_PASSWORD && key === QUIZ_HOST_PASSWORD) || await quizPassOk(key);
+    if (!host) return json({ errorCode: "unauthorized", errorDescription: "Only the quizmaster can change the notice" }, 401, headers);
+    const b = await req.json().catch(() => ({} as Record<string, unknown>));
+    const clean = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+    const title = clean(b.title, 80), text = clean(b.text, 200);
+    if (!text) return json({ errorCode: "bad_notice", errorDescription: "Type what the notice should say" }, 400, headers);
+    await writeNotice(title, text);
+    return json({ notice: await readNotice() }, 200, headers);
+  }
   // Share links carry their own password (see handleLink) and may use only the
   // /link/* routes and the multipart /upload/* plumbing.
   let linkAuth: { id: string; kind: string; label: string } | null = null;
