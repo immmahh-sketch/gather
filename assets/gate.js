@@ -18,7 +18,16 @@
   // The quizmaster's call window, opened by Let's Quiz's host screen, brings its own call pass in the address
   // (#pass=qt.<expiry>.<signature>, signed with the quiz host password; gather-rtc quizPassOk). It opens calls only,
   // so that window needs no password and offers no files (GATHER_PASS_ONLY). Taken out of the address at once.
-  const PASS = (() => { try { const v = new URLSearchParams(location.hash.slice(1)).get('pass') || ''; return /^qt\.\d{13}\.[0-9a-f]{64}$/.test(v) && +v.split('.')[1] > Date.now() ? v : ''; } catch { return ''; } })();
+  // The pass is also kept for this tab only (sessionStorage), so a reload - Rejoin after leaving - still works; it dies with the tab.
+  const PASS = (() => {
+    const ok = v => /^qt\.\d{13}\.[0-9a-f]{64}$/.test(v) && +v.split('.')[1] > Date.now();
+    try {
+      const fromAddress = new URLSearchParams(location.hash.slice(1)).get('pass') || '';
+      if (ok(fromAddress)) { try { sessionStorage.setItem('gather.pass', fromAddress); } catch {} return fromAddress; }
+      const kept = sessionStorage.getItem('gather.pass') || '';
+      return ok(kept) ? kept : '';
+    } catch { return ''; }
+  })();
   if (PASS) { window.GATHER_KEY = PASS; window.GATHER_PASS_ONLY = true; try { history.replaceState(null, '', location.pathname + location.search); } catch {} }
 
   async function sha256(s) {

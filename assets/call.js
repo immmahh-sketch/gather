@@ -84,6 +84,19 @@
   $('#roomName').textContent = roomTitle;
   $('#preRoom').textContent = roomTitle;
   el.nameInput.value = localStorage.getItem('gather.name') || '';
+  // A window opened with a call pass (the portal's Marketing Call, the quizmaster's window) has no business on Gather's
+  // home page: the logo stops being a link, "Back to home" goes, and "Home" becomes "Close this tab".
+  if (window.GATHER_PASS_ONLY) {
+    document.querySelectorAll('a[href="./"]').forEach(a => {
+      if (a.classList.contains('btn')) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = a.className; b.textContent = 'Close this tab';
+        b.addEventListener('click', () => { window.close(); setTimeout(() => { b.textContent = 'You can close this tab now'; b.disabled = true; }, 400); });
+        a.replaceWith(b);
+      } else if (a.classList.contains('brand')) a.removeAttribute('href');
+      else a.remove();
+    });
+  }
   // The Staff Portal opens its Marketing Call with a call pass, the person's portal name and autojoin=1. Only a window
   // that carries a pass may set the name from the address; that name is not saved over the one kept on this device.
   const portalName = window.GATHER_PASS_ONLY ? (new URLSearchParams(location.search).get('name') || '').trim().slice(0, 30) : '';
