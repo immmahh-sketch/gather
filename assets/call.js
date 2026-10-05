@@ -84,6 +84,10 @@
   $('#roomName').textContent = roomTitle;
   $('#preRoom').textContent = roomTitle;
   el.nameInput.value = localStorage.getItem('gather.name') || '';
+  // The Staff Portal opens its Marketing Call with a call pass, the person's portal name and autojoin=1. Only a window
+  // that carries a pass may set the name from the address; that name is not saved over the one kept on this device.
+  const portalName = window.GATHER_PASS_ONLY ? (new URLSearchParams(location.search).get('name') || '').trim().slice(0, 30) : '';
+  if (portalName) el.nameInput.value = portalName;
 
   // ---------- helpers ----------
   let toastTimer = null;
@@ -334,6 +338,8 @@
       } catch {}
     }
     if (canShare) el.shareBtn.classList.remove('hidden');
+    // Straight into the room from the portal's "Join the call" button (pass + autojoin=1): no Join screen.
+    if (window.GATHER_PASS_ONLY && portalName && new URLSearchParams(location.search).get('autojoin') === '1') { join(); return; }
     icePromise.then(() => { if (rtcReachable === false) el.preStatus.textContent = explain(new Error('unreachable')); });
   }
 
@@ -768,7 +774,7 @@
   async function join() {
     if (joined) return;
     local.name = el.nameInput.value.trim().slice(0, 30) || 'Guest';
-    try { localStorage.setItem('gather.name', local.name); } catch {}
+    if (!window.GATHER_PASS_ONLY) { try { localStorage.setItem('gather.name', local.name); } catch {} }
     joined = true;
     ensureAudioContext();
     el.joinBtn.disabled = true;
