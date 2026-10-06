@@ -352,7 +352,13 @@
     }
     if (canShare) el.shareBtn.classList.remove('hidden');
     // Straight into the room from the portal's "Join the call" button (pass + autojoin=1): no Join screen.
-    if (window.GATHER_PASS_ONLY && portalName && new URLSearchParams(location.search).get('autojoin') === '1') { join(); return; }
+    if (window.GATHER_PASS_ONLY && portalName && new URLSearchParams(location.search).get('autojoin') === '1') {
+      // present=1 (the P&L Review call's "Join and present"): once in the room, offer one big button to share the screen. A
+      // browser only starts a screen share from a click and always asks which window or tab, so this is as direct as it gets.
+      const present = new URLSearchParams(location.search).get('present') === '1';
+      join().then(() => { if (present) offerPresent(); }, () => {});
+      return;
+    }
     icePromise.then(() => { if (rtcReachable === false) el.preStatus.textContent = explain(new Error('unreachable')); });
   }
 
@@ -1586,6 +1592,29 @@
     if (!files.length) return;
     if (mediaAppend && presenter) presenterAdd(files); else startMediaShare(files);
   });
+
+  function offerPresent() {
+    if (!canScreen) { toast("Sharing a screen isn't possible on this device"); return; }
+    const bar = document.createElement('div');
+    bar.setAttribute('role', 'dialog');
+    bar.style.cssText = 'position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:50;background:#fff;color:#262626;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:14px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:92vw;font:15px/1.35 system-ui,sans-serif';
+    const msg = document.createElement('span');
+    msg.textContent = "You're in. Ready to present?";
+    const go = document.createElement('button');
+    go.type = 'button'; go.textContent = 'Share your screen';
+    go.style.cssText = 'background:#4E5F4F;color:#fff;border:0;border-radius:8px;padding:11px 18px;font:600 15px system-ui,sans-serif;cursor:pointer';
+    const later = document.createElement('button');
+    later.type = 'button'; later.textContent = 'Not now';
+    later.style.cssText = 'background:transparent;color:#5d6a62;border:0;padding:8px;font:14px system-ui,sans-serif;cursor:pointer';
+    const note = document.createElement('small');
+    note.textContent = 'Choose the P&L window or tab when your browser asks.';
+    note.style.cssText = 'flex-basis:100%;text-align:center;color:#5d6a62;font-size:13px';
+    bar.append(msg, go, later, note);
+    document.body.appendChild(bar);
+    go.addEventListener('click', async () => { await startScreenShare(); if (local.screen) bar.remove(); });
+    later.addEventListener('click', () => bar.remove());
+    go.focus();
+  }
 
   async function startScreenShare() {
     if (local.screen) return;
