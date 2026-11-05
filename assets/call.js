@@ -1193,6 +1193,24 @@
     if (s) setTileInfo(s, { label: local.shareKind === 'media' ? "You're presenting" : local.shareKind === 'live' ? 'Your live video' : 'Your screen', name: local.name, muted: false, noVideo: !videoLive(s.stream), connecting: false });
   }
 
+  // ---------- the quiz page's rotating side column ----------
+  var ROTATE_MS = 7000, rotor = 0, lastK = 0; // var: render() can run before this line is reached
+  /** How many tiles fit in the side column: a column down the right on a wide screen, a row on a phone. */
+  function sideSlots() { return innerWidth >= 900 ? Math.max(3, Math.floor((innerHeight - 100) / 172)) : Math.max(2, Math.floor((innerWidth - 16) / 158)); }
+  /** Up to `k` other cameras for the side column, taking turns: people with their camera on first (stable order), `rotor` places along. */
+  function rotatingFaces(all, skip, k, at) {
+    if (k <= 0) return [];
+    const cams = all.filter(t => t.kind === 'cam' && !t.self && !skip.includes(t.id) && t.id !== 'local:cam');
+    const on = cams.filter(t => !t.el.classList.contains('no-video'));
+    const ids = (on.length ? on : cams).map(t => t.id).sort();
+    if (ids.length <= k) return ids;
+    return Array.from({ length: k }, (_, i) => ids[((at || 0) + i) % ids.length]);
+  }
+  setInterval(() => {
+    if (!joinOnly || view !== 'speaker' || document.hidden || !joined || lastK <= 0) return;
+    rotor = (rotor || 0) + lastK; render();
+  }, ROTATE_MS);
+
   function render() {
     const all = [...tiles.values()];
     if (speaker && !tiles.has(speaker)) speaker = null;
@@ -1210,7 +1228,12 @@
       if (!stageId) stageId = talker;
       // Anyone with a hand up stays in view too, first up first.
       const hands = [...peers.values()].filter(p => p.state.hand && !p.tv).sort((x, y) => x.state.hand - y.state.hand).map(p => p.id + ':cam');
-      side = [latestShare, talker, ...hands, 'local:screen', 'local:cam'].filter((id, i, a) => id && id !== stageId && tiles.has(id) && a.indexOf(id) === i);
+      const fixed = [latestShare, talker, ...hands].filter((id, i, a) => id && id !== stageId && tiles.has(id) && a.indexOf(id) === i);
+      // The quiz page: the quiz screen stays big, and the rest of the column keeps rotating through everyone with a
+      // camera on, so over a minute or so everyone gets seen (the talker, raised hands and you always stay).
+      lastK = joinOnly ? Math.max(0, sideSlots() - fixed.length - 1) : 0;
+      const turn = joinOnly ? rotatingFaces(all, [stageId, ...fixed], lastK, rotor) : [];
+      side = [...fixed, ...turn, 'local:screen', 'local:cam'].filter((id, i, a) => id && id !== stageId && tiles.has(id) && a.indexOf(id) === i);
     }
     el.call.classList.toggle('has-stage', !!stageId);
     if (tvMode) {
