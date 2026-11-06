@@ -40,6 +40,13 @@
     const start = async () => {
       if (PASS) return resolve(PASS);
       if (!HASHES.length || !crypto.subtle) return resolve(window.GATHER_KEY);
+      // A link with the password in it (page#key=...) signs the person in: the part after # never goes to a server,
+      // and it is taken out of the address at once. Only the quiz page's own password is accepted this way.
+      const fromLink = quiz ? new URLSearchParams(location.hash.slice(1)).get('key') || '' : '';
+      if (fromLink) {
+        try { history.replaceState(null, '', location.pathname + location.search); } catch {}
+        if (HASHES.includes(await sha256(fromLink))) return done(fromLink);
+      }
       for (const have of quiz ? [saved(), read('gather.key')] : [saved()]) {
         if (have && HASHES.includes(await sha256(have))) { window.GATHER_KEY = have; return resolve(have); }
       }
