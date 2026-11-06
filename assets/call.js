@@ -201,6 +201,7 @@
       if (t.kind === 'audio') local.audio = t; else local.video = t;
     }
     if (local.video) local.video.contentHint = 'motion';
+    if (local.audio) watchMic(local.audio);
   }
 
   function applyMediaButtons() {
@@ -251,9 +252,55 @@
     document.addEventListener('keyup', e => { if ((e.key === 't' || e.key === 'T') && pttKey) { pttKey = false; pttUp(); } });
     window.addEventListener('blur', () => { if (pttKey) { pttKey = false; if (!pttLatched) hostPtt(false); } });
   }
+  // ---------- audio recovery ----------
+  // Bluetooth headphones (AirPods) can drop out mid-call when Windows switches them between listening and talking modes: the
+  // microphone track ends or goes silent, or the sound stops reaching the ears, while the headphones still show as connected
+  // (5 Nov 2026). fixAudio opens a fresh microphone, swaps it into what is being sent (no new connection, nobody is dropped), and starts
+  // every voice playing again on the current output. It runs by itself when the microphone track ends or stays silent, and when the
+  // audio devices change (at most once every 10 seconds), and on the Let's Quiz host panel's "Reconnect audio" button ({lq: 'audiofix'}).
+  let fixing = false, lastAutoFix = 0, fixTimer = null;
+  async function fixAudio(why) {
+    if (fixing || !joined) return false;
+    fixing = true;
+    try {
+      const old = local.audio;
+      let nt = null;
+      try { nt = (await navigator.mediaDevices.getUserMedia({ audio: AUDIO })).getAudioTracks()[0]; } catch (e) { console.warn('audio fix: no microphone', e); }
+      if (nt) {
+        nt.enabled = old ? old.enabled : (local.micOn && !quizHost); // keeps muted / push-to-talk exactly as it was
+        const pc = sfu.push && sfu.push.pc;
+        if (pc && old) for (const snd of pc.getSenders()) if (snd.track === old) { try { await snd.replaceTrack(nt); } catch (e) { console.warn('audio fix: swap', e); } }
+        if (old) { try { local.cam.removeTrack(old); } catch {} try { old.stop(); } catch {} }
+        local.cam.addTrack(nt); local.audio = nt; watchMic(nt);
+      }
+      for (const a of voices.values()) { // the speakers: start each voice again on the current output
+        try { if (a.setSinkId) await a.setSinkId('default'); } catch {}
+        const st = a.srcObject; a.srcObject = null; a.srcObject = st;
+        if (!a.muted) playVoice(a);
+      }
+      try { if (actx && actx.state !== 'running') actx.resume(); } catch {}
+      applyMediaButtons();
+      console.info('audio reset (' + why + ')');
+      return !!nt;
+    } finally { fixing = false; }
+  }
+  function fixAudioSoon(why) {
+    if (!joined || Date.now() - lastAutoFix < 10000) return;
+    clearTimeout(fixTimer);
+    fixTimer = setTimeout(() => { lastAutoFix = Date.now(); fixAudio(why); }, 1500);
+  }
+  function watchMic(t) {
+    if (!t || t._watched) return; t._watched = true;
+    let silentT = null;
+    t.addEventListener('ended', () => { if (t === local.audio) fixAudioSoon('the microphone stopped'); });
+    t.addEventListener('mute', () => { clearTimeout(silentT); silentT = setTimeout(() => { if (t === local.audio && t.muted) fixAudioSoon('the microphone went silent'); }, 4000); });
+    t.addEventListener('unmute', () => clearTimeout(silentT));
+  }
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange', () => fixAudioSoon('the audio devices changed'));
   window.addEventListener('message', e => {
     if (!quizHost || !joined || !/^https:\/\/(www\.)?letsquiz\.uk$|^http:\/\/localhost:8787$/.test(e.origin)) return;
     const d = e.data || {};
+    if (d.lq === 'audiofix') { lastAutoFix = Date.now(); fixAudio('the host panel button'); return; }
     if (d.lq !== 'ptt') return;
     if (d.act === 'down') pttDown(); else if (d.act === 'up') pttUp(); else hostPtt(!!d.on);
   });
