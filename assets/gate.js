@@ -52,10 +52,14 @@
   function showGate(done) {
     const wrap = document.createElement('div');
     wrap.id = 'gate';
+    const join = window.GATHER_JOIN || {};
+    if (join.theme) wrap.classList.add(join.theme);
     wrap.innerHTML =
       '<form class="gate-card" autocomplete="off">' +
-      '<svg class="mark" viewBox="0 0 64 64"><defs><linearGradient id="gateg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e9e70"/><stop offset="1" stop-color="#0a6448"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#gateg)"/><g fill="#fff" stroke="url(#gateg)" stroke-width="6.4" paint-order="stroke"><circle cx="32" cy="25" r="11"/><circle cx="22" cy="42" r="11"/><circle cx="42" cy="42" r="11"/></g></svg>' +
-      '<h1>' + (quiz ? 'Quiz night' : 'Gather') + '</h1>' +
+      (join.theme && join.logo
+        ? '<img class="mark" src="' + join.logo + '" alt="">'
+        : '<svg class="mark" viewBox="0 0 64 64"><defs><linearGradient id="gateg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e9e70"/><stop offset="1" stop-color="#0a6448"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#gateg)"/><g fill="#fff" stroke="url(#gateg)" stroke-width="6.4" paint-order="stroke"><circle cx="32" cy="25" r="11"/><circle cx="22" cy="42" r="11"/><circle cx="42" cy="42" r="11"/></g></svg>') +
+      '<h1>' + (quiz ? (join.gateTitle || 'Quiz night') : 'Gather') + '</h1>' +
       '<p>' + (quiz ? 'Enter the quiz password you were given.' : 'This is a private site. Enter the password you were given.') + '</p>' +
       '<input type="password" id="gatePw" placeholder="Password" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">' +
       '<div class="gate-err" id="gateErr"></div>' +

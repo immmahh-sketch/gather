@@ -395,13 +395,26 @@ body.joinonly .drophint, body.joinonly #prejoin .foot a, body.joinonly #left .ro
 
 /* Quiz night doors: shown on the join-only page until the quiz screen is shared */
 .soon { position: fixed; inset: 0; z-index: 150; display: grid; place-items: center; padding: 24px; text-align: center; background: radial-gradient(900px 520px at 50% -10%, rgba(18, 128, 95, .45), transparent 70%), #0f1412; color: #f2f4f3; }
-body.gated > #soon.soon { visibility: visible; }
 .soon-card { max-width: 560px; }
 .soon-card img { width: 96px; height: 96px; border-radius: 24px; margin: 0 auto 22px; display: block; box-shadow: 0 16px 40px -12px rgba(0, 0, 0, .6); }
 .soon-card h1 { margin: 0 0 12px; font-size: clamp(30px, 6vw, 48px); line-height: 1.1; letter-spacing: -0.025em; font-weight: 800; }
 .soon-when { margin: 0 0 22px; font-size: clamp(19px, 3.4vw, 24px); font-weight: 700; color: #f4b53f; }
 .soon-note { margin: 0; color: #9aa39e; font-size: 15px; }
 .soon.checking h1, .soon.checking .soon-when { visibility: hidden; }
+/* The Traitors quiz night: burgundy and gold, set by GATHER_JOIN.theme on quiz/index.html */
+#gate.traitors, .soon.traitors { background: radial-gradient(900px 520px at 50% -10%, rgba(138, 28, 38, .6), transparent 70%), #12080a; color: #f4e9d0; }
+#gate.traitors .mark, .soon.traitors .soon-card img { width: 112px; height: 112px; border-radius: 28px; box-shadow: 0 18px 44px -12px rgba(0, 0, 0, .75); }
+#gate.traitors .mark { margin: 0 auto 20px; display: block; }
+#gate.traitors h1, .soon.traitors h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: #e8c46a; }
+#gate.traitors h1 { font-size: 25px; line-height: 1.15; letter-spacing: .07em; white-space: nowrap; }
+.soon.traitors .soon-card { max-width: 760px; }
+.soon.traitors h1 { font-size: clamp(28px, 5.6vw, 46px); letter-spacing: .07em; }
+.soon.traitors .soon-when { color: #f4e9d0; font-family: Georgia, "Times New Roman", serif; font-weight: 400; }
+#gate.traitors p, .soon.traitors .soon-note { color: #c9b998; }
+#gate.traitors input { background: #1d0c0f; border-color: #5a2a30; }
+#gate.traitors input:focus { outline: 2px solid #e8c46a; }
+#gate.traitors button { background: #8a1c26; color: #f4e9d0; }
+body.tv .soon.traitors h1 { font-size: 60px; }
 body.tv .soon-card h1 { font-size: 56px; }
 body.tv .soon-when { font-size: 30px; }
 

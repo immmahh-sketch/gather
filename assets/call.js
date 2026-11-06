@@ -275,10 +275,14 @@
   }
   function waitForQuiz() {
     if (!joinOnly || JOIN.doors === false || !window.supabase) return Promise.resolve();
+    // the password comes first: the notice only shows once it has been typed (or was already saved on this device)
+    return (window.GATHER_READY || Promise.resolve()).then(showSoon);
+  }
+  function showSoon() {
     const soon = document.createElement('div');
     soon.id = 'soon';
-    soon.className = 'soon checking';
-    soon.innerHTML = '<div class="soon-card"><img src="/assets/icons/quiz-192.png" alt=""><h1></h1><p class="soon-when"></p><p class="soon-note"></p></div>';
+    soon.className = 'soon checking' + (JOIN.theme ? ' ' + JOIN.theme : '');
+    soon.innerHTML = '<div class="soon-card"><img src="' + (JOIN.logo || '/assets/icons/quiz-192.png') + '" alt=""><h1></h1><p class="soon-when"></p><p class="soon-note"></p></div>';
     soon.querySelector('h1').textContent = JOIN.soonTitle || 'Coming soon!';
     soon.querySelector('.soon-when').textContent = JOIN.soonText || '';
     // the quizmaster's own words, if they've set them (notice.html, or "Quiz call notice" in the desktop apps)

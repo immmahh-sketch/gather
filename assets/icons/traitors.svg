@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="0%" r="95%"><stop offset="0" stop-color="#5a1a27"/><stop offset="1" stop-color="#1a0709"/></radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#b8913a"/><stop offset=".5" stop-color="#f2d98a"/><stop offset="1" stop-color="#b8913a"/></linearGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#9aa0a8"/><stop offset=".5" stop-color="#f3f5f7"/><stop offset="1" stop-color="#8a9098"/></linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <rect x="9" y="9" width="238" height="238" rx="48" fill="none" stroke="#e8c46a" stroke-opacity=".55" stroke-width="3"/>
+  <!-- blade -->
+  <path d="M128 30 L148 68 L148 152 L108 152 L108 68 Z" fill="url(#steel)"/>
+  <path d="M128 44 L128 152" stroke="#6d747c" stroke-width="3" stroke-linecap="round"/>
+  <!-- guard -->
+  <path d="M78 152 Q78 142 92 142 L164 142 Q178 142 178 152 L178 164 L78 164 Z" fill="url(#gold)"/>
+  <circle cx="78" cy="153" r="8" fill="url(#gold)"/><circle cx="178" cy="153" r="8" fill="url(#gold)"/>
+  <!-- grip -->
+  <rect x="117" y="164" width="22" height="46" rx="5" fill="#7a1824"/>
+  <g stroke="#e8c46a" stroke-width="3" stroke-linecap="round" opacity=".9"><path d="M117 176 L139 172"/><path d="M117 187 L139 183"/><path d="M117 198 L139 194"/></g>
+  <!-- pommel -->
+  <circle cx="128" cy="220" r="12" fill="url(#gold)"/>
+</svg>
