@@ -542,3 +542,6 @@ body.tv .tvhere-tip { font-size: 24px; padding: 16px 28px; }
    to the left too, where nothing can scroll to it) */
 .controls { flex-wrap: wrap; row-gap: 8px; }
 
+
+/* Change-password dialog error line */
+.lkdlg-err { color: #c0392b; font-size: 13.5px; min-height: 18px; margin: -6px 0 10px; }

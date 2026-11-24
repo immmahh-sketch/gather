@@ -35,6 +35,28 @@
     return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
+  // The site password can be changed from the app, so the valid hash is not only
+  // the one shipped in config.js. We remember the last one we saw and, when a
+  // saved or typed password is not recognised, ask the server for the current
+  // one (GET /auth/hash — the hash has always been public). Falls back to the
+  // shipped hash if the server can't be reached.
+  async function liveSiteHash() {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 2500);
+      const r = await fetch((cfg.RTC_ENDPOINT || '') + '/auth/hash', { headers: { apikey: cfg.SUPABASE_KEY || '' }, signal: ctl.signal });
+      clearTimeout(timer);
+      const d = await r.json();
+      if (d && /^[0-9a-f]{64}$/.test(d.hash || '')) { try { localStorage.setItem('gather.sitehash', d.hash); } catch {} return d.hash; }
+    } catch {}
+    return '';
+  }
+  function knownHashes() {
+    const extra = read('gather.sitehash');
+    return extra && !HASHES.includes(extra) ? HASHES.concat(extra) : HASHES.slice();
+  }
+  const matchesAny = async (value, hashes) => hashes.includes(await sha256(value));
+
   const ready = new Promise(resolve => {
     const done = key => { window.GATHER_KEY = key; try { localStorage.setItem(KEY, key); } catch {} resolve(key); };
     const start = async () => {
@@ -45,10 +67,18 @@
       const fromLink = quiz ? new URLSearchParams(location.hash.slice(1)).get('key') || '' : '';
       if (fromLink) {
         try { history.replaceState(null, '', location.pathname + location.search); } catch {}
-        if (HASHES.includes(await sha256(fromLink))) return done(fromLink);
+        if (await matchesAny(fromLink, knownHashes())) return done(fromLink);
       }
-      for (const have of quiz ? [saved(), read('gather.key')] : [saved()]) {
-        if (have && HASHES.includes(await sha256(have))) { window.GATHER_KEY = have; return resolve(have); }
+      const candidates = quiz ? [saved(), read('gather.key')] : [saved()];
+      // Fast path: a saved password we already recognise (no network needed).
+      for (const have of candidates) {
+        if (have && await matchesAny(have, knownHashes())) { liveSiteHash(); window.GATHER_KEY = have; return resolve(have); }
+      }
+      // Not recognised — the site password may have been changed elsewhere. Ask
+      // the server for the current hash and try once more before prompting.
+      const live = await liveSiteHash();
+      if (live) for (const have of candidates) {
+        if (have && await sha256(have) === live) { window.GATHER_KEY = have; return resolve(have); }
       }
       showGate(done);
     };
@@ -81,7 +111,10 @@
       const v = pw.value;
       if (!v) return;
       go.disabled = true;
-      if (HASHES.includes(await sha256(v))) {
+      const hashes = knownHashes();
+      const live = await liveSiteHash();
+      if (live && !hashes.includes(live)) hashes.push(live);
+      if (hashes.includes(await sha256(v))) {
         wrap.remove();
         document.body.classList.remove('gated');
         done(v);

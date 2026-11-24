@@ -36,7 +36,8 @@
 // Secrets (set with `npx.cmd supabase secrets set NAME="value"`):
 //   CF_SFU_APP_ID, CF_SFU_APP_SECRET   Realtime → SFU → your application
 //   CF_TURN_KEY_ID, CF_TURN_API_TOKEN  Realtime → TURN → your key (optional)
-//   GATHER_PASSWORD                    the site password
+//   GATHER_PASSWORD                    the site password (the starting one; it can then be
+//                                      changed from the app, which stores the new one under _config/)
 //   GATHER_QUIZ_PASSWORD               the quiz night page's password (calls only)
 //   QUIZ_HOST_PASSWORD                 Let's Quiz host password (set for quiz-api; calls only,
 //                                      so the quiz host screen can join the call from letsquiz.uk;
@@ -680,6 +681,38 @@ async function forward(path: string, method: string, body: string) {
   return { status: r.status, text };
 }
 
+// The site password can be changed from the app. The new one's SHA-256 is kept
+// as an empty object _config/sitepw.<hash>; once set it replaces GATHER_PASSWORD
+// (the env value then only comes back if that object is removed, which is the
+// way to recover a forgotten one).
+const CONFIG = "_config";
+let sitePwCache: { hash: string | null; at: number } | null = null;
+async function storedSiteHash(): Promise<string | null> {
+  const now = Date.now();
+  if (sitePwCache && now - sitePwCache.at < 20000) return sitePwCache.hash;
+  let hash: string | null = null;
+  try {
+    for (const o of await listPrefix(CONFIG + "/")) {
+      const m = o && o.id ? /^sitepw\.([0-9a-f]{64})$/.exec(o.name) : null;
+      if (m) { hash = m[1]; break; }
+    }
+  } catch { /* storage down: fall back to the env password below */ }
+  sitePwCache = { hash, at: now };
+  return hash;
+}
+async function siteKeyOk(key: string): Promise<boolean> {
+  if (!GATHER_PASSWORD) return true;
+  const stored = await storedSiteHash();
+  if (stored) return !!key && (await sha256hex(key)) === stored;
+  return key === GATHER_PASSWORD;
+}
+// The hash of the current site password, so a page can check a typed password
+// without the server ever seeing a list of valid passwords. No secret here: the
+// same hash has always shipped in assets/config.js.
+async function currentSiteHash(): Promise<string> {
+  return (await storedSiteHash()) || (GATHER_PASSWORD ? await sha256hex(GATHER_PASSWORD) : "");
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
   const headers = cors(origin);
@@ -690,7 +723,10 @@ Deno.serve(async (req) => {
   // The function name is the first path segment; everything after it is ours.
   const path = url.pathname.replace(/^.*?\/gather-rtc/, "") || "/";
 
-  const siteAuthed = !GATHER_PASSWORD || req.headers.get("x-gather-key") === GATHER_PASSWORD;
+  // Unauthenticated: the gate needs this to check a typed password locally.
+  if (path === "/auth/hash" && req.method === "GET") return json({ hash: await currentSiteHash() }, 200, headers);
+
+  const siteAuthed = await siteKeyOk(req.headers.get("x-gather-key") || "");
   if (path === "/notice" && req.method === "GET") return json({ notice: await readNotice() }, 200, headers);
   if (path === "/notice" && req.method === "POST") {
     const key = req.headers.get("x-gather-key");
@@ -720,6 +756,19 @@ Deno.serve(async (req) => {
   try {
     if (path === "/ice" && req.method === "GET") {
       return json({ iceServers: await iceServers() }, 200, headers);
+    }
+    if (path === "/auth/password" && req.method === "POST") {
+      if (!siteAuthed) return json({ errorCode: "unauthorized", errorDescription: "Enter the current password first" }, 401, headers);
+      await ensureBucket();
+      const b = await req.json().catch(() => ({} as Record<string, unknown>));
+      const next = String(b.password || "");
+      if (next.trim().length < 3) return json({ errorCode: "too_short", errorDescription: "Pick a password of at least 3 characters" }, 400, headers);
+      const newHash = await sha256hex(next);
+      const olds = (await listPrefix(CONFIG + "/")).filter((o) => o && o.id && /^sitepw\./.test(o.name)).map((o) => `${CONFIG}/${o.name}`);
+      await removeKeys(olds);
+      await putEmpty(`${CONFIG}/sitepw.${newHash}`);
+      sitePwCache = { hash: newHash, at: Date.now() };
+      return json({ ok: true, hash: newHash }, 200, headers);
     }
     if (path.startsWith("/link/")) {
       const res = await handleLink(path, req, url, headers, { site: siteAuthed, link: linkAuth });

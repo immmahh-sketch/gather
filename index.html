@@ -187,7 +187,7 @@
       <img src="assets/icons/icon-192.png" alt="">
       <div><strong>Keep it on your phone</strong><span>Open the share menu in your browser and choose <em>Add to Home Screen</em>. Gather then opens like any other app.</span></div>
     </div>
-    <p>Gather · made for family calls.</p>
+    <p>Gather · made for family calls. <button type="button" class="textbtn" id="changePw">Change site password</button></p>
   </footer>
 </main>
 
@@ -226,6 +226,15 @@
   // The quizmaster's way in: the same room as the join-only quiz page, with
   // screen sharing and everything else switched on.
   $('#quizCall').addEventListener('click', () => { location.href = linkFor('lets-quiz'); });
+
+  // Change the site password, from the footer button or the desktop app's menu
+  // (which opens this page at #change-password). Needs to be signed in first.
+  let toastTimer = null;
+  const toast = m => { const t = $('#toast'); if (!t) return; t.textContent = m; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600); };
+  const openChangePw = () => (window.GATHER_READY || Promise.resolve()).then(() => window.GatherUI && GatherUI.changePassword(toast));
+  $('#changePw').addEventListener('click', openChangePw);
+  if (location.hash === '#change-password') { openChangePw(); try { history.replaceState(null, '', location.pathname); } catch {} }
+  window.addEventListener('hashchange', () => { if (location.hash === '#change-password') { openChangePw(); try { history.replaceState(null, '', location.pathname); } catch {} } });
 
   // Permanent room
   const permName = $('#permName'), permLink = $('#permLink'), permTitle = $('#permTitle'), renameRow = $('#renameRow');

@@ -187,6 +187,7 @@ app.whenReady().then(async () => {
     { label: 'Home', accelerator: 'Alt+Home', click: () => win && win.loadURL(HOME) },
     { label: 'Quiz night (host)', click: () => win && win.loadURL(QUIZ_HOST) },
     { label: 'Quiz call notice…', accelerator: 'CmdOrCtrl+Shift+N', click: openNotice },
+    { label: 'Change site password…', click: () => win && win.loadURL(HOME + '#change-password') },
     { type: 'separator' }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate([
