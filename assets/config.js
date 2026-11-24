@@ -11,7 +11,7 @@ window.GATHER_CONFIG = {
 
   // SHA-256 of the site password. The pages check it to let you in; the call
   // server checks the password itself, so this hash alone opens nothing.
-  PASSWORD_HASH: '37a93333f5e00c951a2d37baf6a5b480d44b3c2db300f117eb36669a8f2cef4f',
+  PASSWORD_HASH: '698339402a6a83ad5387d0310dd614617ff5764a74bc4ac57a01d082d95dacf5',
   // SHA-256 of the quiz night password. It opens the quiz page (calls only);
   // the site password works there too.
   QUIZ_PASSWORD_HASH: '69d2457f65ab2cba1d0561d8e0a3ee4962d5708551353716d7885ad1aee51f8d',
