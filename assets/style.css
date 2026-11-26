@@ -545,3 +545,16 @@ body.tv .tvhere-tip { font-size: 24px; padding: 16px 28px; }
 
 /* Change-password dialog error line */
 .lkdlg-err { color: #c0392b; font-size: 13.5px; min-height: 18px; margin: -6px 0 10px; }
+
+/* Room-password guests: calls only, no files */
+body.room-only #filesBtn, body.room-only .filespanel, body.room-only .drophint { display: none; }
+
+/* Room passwords manager (home) */
+.rp-form { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.rp-form .field { flex: 1 1 220px; min-width: 0; }
+.rp-form .btn { flex: 0 0 auto; }
+.rp-status { color: var(--muted); font-size: 13.5px; min-height: 18px; margin-bottom: 8px; }
+.rp-share { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--brand-soft); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; }
+.rp-share code { background: #fff; border-radius: 8px; padding: 6px 9px; font-weight: 700; }
+.rp-roomrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+.rp-roomrow .rp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }

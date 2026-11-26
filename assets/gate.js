@@ -57,8 +57,31 @@
   }
   const matchesAny = async (value, hashes) => hashes.includes(await sha256(value));
 
+  // A call for one room (call.html?room=R) may have its own password, so an
+  // outsider can be let into just that room without the site password. We fetch
+  // that room's password hash and accept it too; a room password is kept under
+  // its own name and marks the person as room-only (no files, no other rooms).
+  const ROOM = (!quiz && !PASS) ? String(new URLSearchParams(location.search).get('room') || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) : '';
+  const roomKeyName = 'gather.roomkey.' + ROOM;
+  let roomHashCache = null;
+  async function roomHash() {
+    if (!ROOM) return '';
+    if (roomHashCache !== null) return roomHashCache;
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 2500);
+      const r = await fetch((cfg.RTC_ENDPOINT || '') + '/room/pass?room=' + encodeURIComponent(ROOM), { headers: { apikey: cfg.SUPABASE_KEY || '' }, signal: ctl.signal });
+      clearTimeout(timer);
+      const d = await r.json();
+      roomHashCache = /^[0-9a-f]{64}$/.test(d && d.hash || '') ? d.hash : '';
+      try { if (roomHashCache) localStorage.setItem('gather.roomhash.' + ROOM, roomHashCache); } catch {}
+    } catch { roomHashCache = read('gather.roomhash.' + ROOM) || ''; }
+    return roomHashCache;
+  }
+
   const ready = new Promise(resolve => {
     const done = key => { window.GATHER_KEY = key; try { localStorage.setItem(KEY, key); } catch {} resolve(key); };
+    const roomDone = key => { window.GATHER_KEY = key; window.GATHER_ROOM_ONLY = true; try { localStorage.setItem(roomKeyName, key); } catch {} document.body.classList.add('room-only'); resolve(key); };
     const start = async () => {
       if (PASS) return resolve(PASS);
       if (!HASHES.length || !crypto.subtle) return resolve(window.GATHER_KEY);
@@ -74,19 +97,25 @@
       for (const have of candidates) {
         if (have && await matchesAny(have, knownHashes())) { liveSiteHash(); window.GATHER_KEY = have; return resolve(have); }
       }
+      // A saved room password for this room's call page.
+      const rh = await roomHash();
+      if (rh) {
+        const savedRoom = read(roomKeyName);
+        if (savedRoom && await sha256(savedRoom) === rh) return roomDone(savedRoom);
+      }
       // Not recognised — the site password may have been changed elsewhere. Ask
       // the server for the current hash and try once more before prompting.
       const live = await liveSiteHash();
       if (live) for (const have of candidates) {
         if (have && await sha256(have) === live) { window.GATHER_KEY = have; return resolve(have); }
       }
-      showGate(done);
+      showGate(done, roomDone, rh);
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
   });
   window.GATHER_READY = ready;
 
-  function showGate(done) {
+  function showGate(done, roomDone, roomHashValue) {
     const wrap = document.createElement('div');
     wrap.id = 'gate';
     const join = window.GATHER_JOIN || {};
@@ -114,10 +143,16 @@
       const hashes = knownHashes();
       const live = await liveSiteHash();
       if (live && !hashes.includes(live)) hashes.push(live);
-      if (hashes.includes(await sha256(v))) {
+      const vh = await sha256(v);
+      const rh = roomHashValue || (roomDone ? await roomHash() : '');
+      if (hashes.includes(vh)) {
         wrap.remove();
         document.body.classList.remove('gated');
         done(v);
+      } else if (rh && vh === rh && roomDone) {
+        wrap.remove();
+        document.body.classList.remove('gated');
+        roomDone(v);
       } else {
         err.textContent = 'That password is not right.';
         pw.select();

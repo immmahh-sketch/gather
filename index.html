@@ -150,6 +150,21 @@
     <p class="dempty" id="linksEmpty">No links yet. Make one above and send it on.</p>
   </section>
 
+  <section class="links wrap hidden" id="roomPw">
+    <div class="dhead"><span class="eyebrow">Room passwords</span></div>
+    <h2 class="dtitle">Give a call room its own password</h2>
+    <p class="hint linkslead">Put a password on any room so you can let someone into just that call — a job candidate, say — without giving them the main site password. Share the room link and its password.</p>
+    <div class="rp-form">
+      <input class="field" id="rpName" type="text" placeholder="Room name, e.g. bhb-interviews" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <input class="field" id="rpPass" type="text" placeholder="Room password (leave blank to remove)" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <button class="btn primary" id="rpSave" type="button">Save</button>
+    </div>
+    <div class="rp-share hidden" id="rpShare"></div>
+    <div class="rp-status" id="rpStatus"></div>
+    <ul class="linklist" id="rpList"></ul>
+    <p class="dempty" id="rpEmpty">No rooms have a password yet.</p>
+  </section>
+
   <section class="steps wrap" id="how">
     <h2 class="section-title">How it works</h2>
     <ol class="stepgrid">
@@ -272,5 +287,6 @@
 <script src="assets/upload.js"></script>
 <script src="assets/people.js"></script>
 <script src="assets/links.js"></script>
+<script src="assets/rooms.js"></script>
 </body>
 </html>

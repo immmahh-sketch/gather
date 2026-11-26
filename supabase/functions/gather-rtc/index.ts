@@ -713,6 +713,34 @@ async function currentSiteHash(): Promise<string> {
   return (await storedSiteHash()) || (GATHER_PASSWORD ? await sha256hex(GATHER_PASSWORD) : "");
 }
 
+// A room can have its own password, so an outsider (a job candidate, say) can be
+// let into just that one call without the site password. Stored as an empty
+// object _rooms/<slug>.<sha256>. The password opens calls only (/ice, /sessions),
+// like the quiz password; the page keeps the person in their one room.
+const ROOMS = "_rooms";
+const ROOMPW_RE = /^([a-z0-9-]{1,40})\.([0-9a-f]{64})$/;
+const roomSlug = (x: string) => String(x || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+let roomCache: { map: Map<string, string>; at: number } | null = null;
+async function roomHashes(): Promise<Map<string, string>> {
+  const now = Date.now();
+  if (roomCache && now - roomCache.at < 20000) return roomCache.map;
+  const map = new Map<string, string>();
+  try {
+    for (const o of await listPrefix(ROOMS + "/")) {
+      const m = o && o.id ? ROOMPW_RE.exec(o.name) : null;
+      if (m) map.set(m[1], m[2]);
+    }
+  } catch { /* storage down: no room passwords, site password still works */ }
+  roomCache = { map, at: now };
+  return map;
+}
+async function anyRoomHash(key: string): Promise<boolean> {
+  if (!key) return false;
+  const h = await sha256hex(key);
+  for (const v of (await roomHashes()).values()) if (v === h) return true;
+  return false;
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
   const headers = cors(origin);
@@ -725,6 +753,11 @@ Deno.serve(async (req) => {
 
   // Unauthenticated: the gate needs this to check a typed password locally.
   if (path === "/auth/hash" && req.method === "GET") return json({ hash: await currentSiteHash() }, 200, headers);
+  // The gate needs a room's password hash before anyone is signed in.
+  if (path === "/room/pass" && req.method === "GET") {
+    const slug = roomSlug(url.searchParams.get("room") || "");
+    return json({ hash: slug ? ((await roomHashes()).get(slug) || "") : "" }, 200, headers);
+  }
 
   const siteAuthed = await siteKeyOk(req.headers.get("x-gather-key") || "");
   if (path === "/notice" && req.method === "GET") return json({ notice: await readNotice() }, 200, headers);
@@ -745,11 +778,13 @@ Deno.serve(async (req) => {
   if (GATHER_PASSWORD && !siteAuthed) {
     const key = req.headers.get("x-gather-key");
     const callsOnly = path === "/ice" || path.startsWith("/sessions/");
-    let ok = callsOnly && ((!!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD) || (!!QUIZ_HOST_PASSWORD && key === QUIZ_HOST_PASSWORD) || await quizPassOk(key));
+    let ok = callsOnly && ((!!GATHER_QUIZ_PASSWORD && key === GATHER_QUIZ_PASSWORD) || (!!QUIZ_HOST_PASSWORD && key === QUIZ_HOST_PASSWORD) || await quizPassOk(key) || await anyRoomHash(key || ""));
     if (!ok && (path.startsWith("/link/") || path.startsWith("/upload/"))) {
       linkAuth = await verifyLink(req.headers.get("x-gather-link"));
       ok = !!linkAuth;
     }
+    // /auth/password checks its own auth (it also accepts the recovery key).
+    if (!ok && path === "/auth/password") ok = true;
     if (!ok) return json({ errorCode: "unauthorized", errorDescription: "Wrong or missing password" }, 401, headers);
   }
 
@@ -757,8 +792,30 @@ Deno.serve(async (req) => {
     if (path === "/ice" && req.method === "GET") {
       return json({ iceServers: await iceServers() }, 200, headers);
     }
+    if (path === "/room/pass" && req.method === "POST") {
+      if (!siteAuthed) return json({ errorCode: "unauthorized", errorDescription: "Owner only" }, 401, headers);
+      await ensureBucket();
+      const b = await req.json().catch(() => ({} as Record<string, unknown>));
+      const slug = roomSlug(String(b.room || ""));
+      if (!slug) return json({ errorCode: "bad_room", errorDescription: "Which room?" }, 400, headers);
+      const pw = String(b.password ?? "");
+      if (pw.length > 0 && pw.trim().length < 3) return json({ errorCode: "too_short", errorDescription: "Pick a password of at least 3 characters" }, 400, headers);
+      const olds = (await listPrefix(ROOMS + "/")).filter((o) => o && o.id && o.name.startsWith(slug + ".")).map((o) => `${ROOMS}/${o.name}`);
+      await removeKeys(olds);
+      if (pw.trim().length >= 3) await putEmpty(`${ROOMS}/${slug}.${await sha256hex(pw.trim())}`);
+      roomCache = null;
+      return json({ ok: true, room: slug, has: pw.trim().length >= 3 }, 200, headers);
+    }
+    if (path === "/room/list" && req.method === "GET") {
+      if (!siteAuthed) return json({ errorCode: "unauthorized", errorDescription: "Owner only" }, 401, headers);
+      return json({ rooms: [...(await roomHashes()).keys()].sort() }, 200, headers);
+    }
     if (path === "/auth/password" && req.method === "POST") {
-      if (!siteAuthed) return json({ errorCode: "unauthorized", errorDescription: "Enter the current password first" }, 401, headers);
+      // The env GATHER_PASSWORD is an owner-only recovery key for CHANGING the
+      // password (set via the Supabase secret). It is not a way into calls or
+      // files on its own — siteKeyOk still uses the stored password for those.
+      const recovery = !!GATHER_PASSWORD && (req.headers.get("x-gather-key") || "") === GATHER_PASSWORD;
+      if (!siteAuthed && !recovery) return json({ errorCode: "unauthorized", errorDescription: "Enter the current password first" }, 401, headers);
       await ensureBucket();
       const b = await req.json().catch(() => ({} as Record<string, unknown>));
       const next = String(b.password || "");
